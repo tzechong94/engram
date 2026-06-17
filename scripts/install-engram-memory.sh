@@ -19,8 +19,14 @@ if [ -z "$GROUP" ] || [ -z "$TENANT" ]; then
   exit 1
 fi
 
-# Load .env for the secrets the memory server needs.
-[ -f .env ] && while IFS= read -r l || [ -n "$l" ]; do case "$l" in ''|\#*) ;; *=*) export "${l%%=*}=${l#*=}";; esac; done < .env
+# Load .env for the secrets the memory server needs. Guarded with if/fi so a missing
+# .env doesn't abort the script under `set -e` (values may contain spaces → never
+# executed, taken literally after the first '=').
+if [ -f .env ]; then
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in ''|\#*) ;; *=*) export "${l%%=*}=${l#*=}" ;; esac
+  done < .env
+fi
 
 MCP_PATH="$(pwd)/packages/memory/dist/mcp-server.js"
 [ -f "$MCP_PATH" ] || { echo "Building memory package…"; pnpm --filter @engram/memory build >/dev/null; }
@@ -28,6 +34,17 @@ MCP_PATH="$(pwd)/packages/memory/dist/mcp-server.js"
 # The container reaches the host Postgres via host.docker.internal (Docker Desktop).
 # In cloud, point this at AnalyticDB via ENGRAM_MEMORY_DB_URL.
 CONTAINER_DB_URL="${ENGRAM_MEMORY_DB_URL:-postgres://engram:engram@host.docker.internal:5433/engram}"
+
+# host.docker.internal does NOT resolve on Linux by default (Docker Desktop only).
+# On a Linux/cloud VM, the memory MCP would fail to reach Postgres silently — warn.
+case "$CONTAINER_DB_URL" in
+  *host.docker.internal*)
+    if [ "$(uname -s)" = "Linux" ]; then
+      echo "  WARNING: host.docker.internal doesn't resolve on Linux by default." >&2
+      echo "  Set ENGRAM_MEMORY_DB_URL to your DB host (AnalyticDB endpoint, or run the" >&2
+      echo "  agent container with --add-host=host.docker.internal:host-gateway)." >&2
+    fi ;;
+esac
 
 ENV_JSON=$(cat <<JSON
 {"ENGRAM_TENANT_ID":"$TENANT","DATABASE_URL":"$CONTAINER_DB_URL","QWEN_MOCK":"${QWEN_MOCK:-false}","DASHSCOPE_API_KEY":"${DASHSCOPE_API_KEY:-}","DASHSCOPE_BASE_URL":"${DASHSCOPE_BASE_URL:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1}","ENGRAM_ENCRYPTION_KEY":"${ENGRAM_ENCRYPTION_KEY:-}"}
@@ -43,6 +60,15 @@ fi
 
 ARGS_JSON="[\"$MCP_PATH\"]"
 run_ncl() { ( cd nanoclaw-v2 && pnpm ncl "$@" ); }
+
+# DRY_RUN=1 prints the exact wiring without touching nanoclaw (the live path needs a
+# running host + a real key). Lets you verify the generated config safely.
+if [ "${DRY_RUN:-0}" = "1" ]; then
+  echo "[dry-run] would run:"
+  echo "  ncl groups config add-mcp-server --id $GROUP --name memory --command node --args '$ARGS_JSON' --env '$ENV_JSON'"
+  echo "  ncl groups restart --id $GROUP"
+  exit 0
+fi
 
 if run_ncl groups config add-mcp-server --id "$GROUP" --name memory --command node --args "$ARGS_JSON" --env "$ENV_JSON"; then
   echo "  ✓ memory MCP added. Restarting the group so it takes effect…"

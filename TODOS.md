@@ -20,6 +20,19 @@ as an external yardstick alongside the synthetic scenario.
 score recall/temporal/contradiction. Sources: arXiv 2410.10813 (LongMemEval), LoCoMo.
 Effort: M-L (CC) — the datasets need adapters.
 
+## Memory MCP secret hygiene  (P2)
+`scripts/install-engram-memory.sh` writes DASHSCOPE_API_KEY + ENGRAM_ENCRYPTION_KEY into
+the nanoclaw `container_configs` DB + materialized `container.json` (plaintext at rest).
+Fine for the native-proxy single-operator model (`groups/` is gitignored), but it's secret
+sprawl. Harden: have the memory MCP subprocess **inherit** these from the container env that
+the native credential proxy already injects, instead of duplicating them in the MCP `env`.
+Verify nanoclaw's stdio MCP child inherits container process env first. Effort: S.
+
+## Installer JSON escaping  (P3)
+The same script interpolates env values into a JSON string unescaped — a value containing
+`"` or `\` (e.g. a DB password) breaks the JSON. Build the `--env` JSON with `jq`/node
+instead of string interpolation. Effort: S.
+
 ## Viewer runtime image slimming  (P3)
 **What:** the viewer Docker runtime currently copies the built workspace + runs via `tsx`.
 **Why:** smaller, faster cold start.

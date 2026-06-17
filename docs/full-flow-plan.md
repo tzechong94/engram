@@ -1,6 +1,29 @@
 # Engram Full Flow — Conversational Agent on Qwen + Channels (Plan)
 
-Status: PROPOSED (pending CEO + Eng review)
+Status: IMPLEMENTED (lean scope) — pending Eng review of the built wiring
+
+## Locked decisions (after CEO review + deployment discussion)
+- **Build on nanoclaw as-is** — reuse its Telegram + Baileys WhatsApp adapters, routing,
+  per-session containers. Zero adapter code written.
+- **D1 = stdio MCP in-container (NOT the HTTP service).** Memory wired exactly like
+  `add-mnemon`: a Node subprocess in the agent container → Postgres, scoped by
+  `ENGRAM_TENANT_ID`. The HTTP memory service is deferred (documented scale-out upgrade;
+  transport-agnostic installer makes it a config swap). The over-built HTTP-service-now
+  proposal was cut.
+- **D2 = native `.env`/KMS credentials**, one operator-held DashScope key. No OneCLI, nothing
+  exposed to users.
+- **D3 tenant** = nanoclaw agent group owner = memory tenant.
+- **D4 orchestration** = `./engram.sh agent` automates deterministic setup + guides the
+  human/skill steps (channel install, bot token, QR, first-agent, memory wiring, host start).
+- **D5 channels** = Telegram + WhatsApp (Baileys) via nanoclaw skills. Baileys is demo-grade;
+  WhatsApp Business Cloud API is the production path (noted).
+
+## Built artifacts (under review)
+- `engram.sh` `agent` command (cmd_agent).
+- `scripts/install-engram-memory.sh` (ncl add-mcp-server wiring, verified flags).
+- `nanoclaw-v2/container/agent-runner/src/providers/qwen.ts` (qwen ACP provider, prior).
+- `docs/agent-and-deploy.md` runbook + Alibaba shape.
+
 Date: 2026-06-17
 Goal: go from "hero runs (`./engram.sh` → memory + viewer)" to "the whole product
 runs" — a Qwen Code agent, reachable on Telegram (then WhatsApp), wired to the Engram
@@ -66,3 +89,14 @@ in the viewer. WhatsApp as a second, clearly-separated step (needs QR/Meta API).
 - Cloud: does the HTTP memory service also become the cloud deployment unit (one service the
   agent + viewer share)?
 - Live validation: Qwen Code ACP + remote MCP both need one real run (gated on key + binary).
+
+## GSTACK REVIEW REPORT
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | scope reduced — dropped HTTP-service over-build, build on nanoclaw |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | CLEAR | 4 findings: 1 P1 (fixed), 1 P2 fixed (Linux warn), 2 P2/P3 → TODOs |
+
+**Eng findings:** P1 `.env` missing-file abort under `set -e` — FIXED. P2 host.docker.internal
+on Linux — FIXED (warn + ENGRAM_MEMORY_DB_URL override + documented). P2 secret sprawl into
+container.json — TODO. P3 JSON escaping — TODO. Added DRY_RUN mode for testability.
+**VERDICT:** CEO + ENG CLEARED. Live round-trip gated on DashScope key + bot token + container build.
