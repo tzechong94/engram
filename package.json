@@ -1,0 +1,27 @@
+{
+  "name": "engram",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Engram — a personal agent with a self-managing cloud memory layer (Qwen). Memory is the hero.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" build",
+    "typecheck": "pnpm -r --filter \"./packages/**\" typecheck",
+    "test": "pnpm -r --filter \"./packages/**\" test",
+    "memory:mcp": "pnpm --filter @engram/memory mcp",
+    "memory:sleep": "pnpm --filter @engram/memory sleep",
+    "eval": "pnpm --filter @engram/eval start",
+    "migrate": "pnpm --filter @engram/memory migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

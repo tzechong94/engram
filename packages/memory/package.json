@@ -1,0 +1,28 @@
+{
+  "name": "@engram/memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Engram cloud memory layer: online path (write/search/forget) + sleep/REM consolidation. Exposed as an MCP server; reusable as a library.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "engram-memory-mcp": "dist/mcp-server.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "migrate": "tsx src/db/migrate.ts",
+    "mcp": "tsx src/mcp-server.ts",
+    "sleep": "tsx src/sleep-worker.ts"
+  },
+  "dependencies": {
+    "@engram/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  }
+}

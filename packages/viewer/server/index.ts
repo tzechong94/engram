@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+/**
+ * Engram brain-viewer server. One tiny Node http process that:
+ *   1. serves a read-only, tenant-scoped JSON API over the memory layer (using
+ *      only MemoryRepo read methods + MemoryService.search — no writes, no
+ *      coupling to internals), and
+ *   2. serves the built React frontend (dist-web) on the SAME port.
+ *
+ *   browser ──/api/:tenant/...──▶ this server ──▶ MemoryRepo (read-only)
+ *           ◀── brain UI (static dist-web) ──┘
+ *
+ * Auth: open locally; if VIEWER_TOKEN is set, every /api call needs it (bearer or
+ * ?token=). The viewer is read-only, but the token gates which tenants' memory is
+ * exposed in a shared/cloud deploy.
+ */
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createInfra, createQwenClient, loadConfig, createLogger } from '@engram/shared';
+import { MemoryService } from '@engram/memory';
+
+const log = createLogger('viewer');
+const PORT = Number(process.env.VIEWER_PORT || 8080);
+const TOKEN = process.env.VIEWER_TOKEN || '';
+const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist-web');
+
+const cfg = loadConfig();
+const infra = createInfra(cfg);
+const qwen = createQwenClient(cfg.qwen);
+const memory = new MemoryService(infra.store, qwen, infra.queue);
+const repo = memory.repository;
+
+function json(res: http.ServerResponse, body: unknown, status = 200): void {
+  const s = JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(s);
+}
+
+function authed(req: http.IncomingMessage, url: URL): boolean {
+  if (!TOKEN) return true;
+  const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  return bearer === TOKEN || url.searchParams.get('token') === TOKEN;
+}
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+};
+
+function serveStatic(res: http.ServerResponse, pathname: string): void {
+  let rel = pathname === '/' ? '/index.html' : pathname;
+  let file = path.join(WEB_DIR, rel);
+  if (!file.startsWith(WEB_DIR) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    file = path.join(WEB_DIR, 'index.html'); // SPA fallback
+  }
+  if (!fs.existsSync(file)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('viewer frontend not built — run `pnpm --filter @engram/viewer build`');
+    return;
+  }
+  const ext = path.extname(file);
+  res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+  fs.createReadStream(file).pipe(res);
+}
+
+async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  if (!authed(req, url)) return json(res, { error: 'unauthorized' }, 401);
+  // /api/tenants
+  const parts = url.pathname.split('/').filter(Boolean); // ['api', ':tenant', 'resource']
+  if (parts.length === 2 && parts[1] === 'tenants') {
+    return json(res, { tenants: await repo.listTenants() });
+  }
+  if (parts.length < 3) return json(res, { error: 'not found' }, 404);
+  const tenant = decodeURIComponent(parts[1]!);
+  const resource = parts[2]!;
+
+  switch (resource) {
+    case 'overview':
+      return json(res, { stats: await repo.memoryStats(tenant), latestCycle: await repo.latestSleepCycle(tenant) });
+    case 'graph': {
+      const [entities, edges] = await Promise.all([repo.getEntities(tenant), repo.getEdgesView(tenant)]);
+      return json(res, {
+        nodes: entities.map((e) => ({ id: e.id, name: e.name, type: e.type, val: 1 + e.salience })),
+        links: edges.map((g) => ({ source: g.src, target: g.dst, relation: g.relation, weight: g.weight, invalidated: g.invalidated })),
+      });
+    }
+    case 'notes':
+      return json(res, { notes: await repo.listAllNotes(tenant) });
+    case 'episodes':
+      return json(res, { episodes: await repo.listEpisodes(tenant) });
+    case 'cycles':
+      return json(res, { cycles: await repo.listSleepCycles(tenant) });
+    case 'core':
+      return json(res, { blocks: await repo.getCoreMemory(tenant) });
+    case 'asof': {
+      const t = url.searchParams.get('t');
+      if (!t) return json(res, { error: 't (ISO timestamp) required' }, 400);
+      return json(res, { notes: await repo.notesAsOf(tenant, t) });
+    }
+    case 'search': {
+      const q = url.searchParams.get('q') || '';
+      const budget = Number(url.searchParams.get('budget') || 1500);
+      if (!q) return json(res, { error: 'q required' }, 400);
+      return json(res, await memory.search({ tenantId: tenant, query: q, tokenBudget: budget }));
+    }
+    default:
+      return json(res, { error: `unknown resource: ${resource}` }, 404);
+  }
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+  if (url.pathname.startsWith('/api/')) {
+    handleApi(req, res, url).catch((err) => {
+      log.error('api error', { path: url.pathname, err: String(err) });
+      json(res, { error: String(err instanceof Error ? err.message : err) }, 500);
+    });
+  } else {
+    serveStatic(res, url.pathname);
+  }
+});
+
+server.listen(PORT, () => log.info(`brain viewer on http://localhost:${PORT}`, { mock: qwen.isMock, auth: !!TOKEN }));

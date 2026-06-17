@@ -1,0 +1,13 @@
+# Engram workspace. The hero (memory) + shared infra live here as clean,
+# independently-testable packages. nanoclaw-v2 is intentionally NOT a member:
+# it stays a self-contained project and reaches the memory service over MCP
+# (a subprocess), not as a code dependency. That keeps the memory package
+# forkable and reusable by Desk (Track 4) with zero agent-runtime coupling.
+packages:
+  - "packages/*"
+
+# Supply-chain: new package versions must age before pnpm resolves them.
+minimumReleaseAge: 4320
+
+onlyBuiltDependencies:
+  - esbuild

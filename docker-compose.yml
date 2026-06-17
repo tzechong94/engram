@@ -1,0 +1,71 @@
+# Local dependency stack for Engram. These stand in for Alibaba managed services:
+#   postgres+pgvector  ->  AnalyticDB for PostgreSQL (or DashVector)
+#   redis              ->  Tair
+#   minio              ->  OSS
+# Ports are offset (5433/6380/9000) so they don't clash with any default local
+# Postgres/Redis you may already run.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: engram
+      POSTGRES_PASSWORD: engram
+      POSTGRES_DB: engram
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./.data/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engram"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./.data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: engram
+      MINIO_ROOT_PASSWORD: engrampassword
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./.data/minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # The brain viewer — read-only memory visualization, browser-accessible on :8080.
+  # Profile-gated so `docker compose up` (the base stack) stays lean; bring it up
+  # with `docker compose --profile viewer up` or `make viewer-docker`.
+  viewer:
+    profiles: ["viewer"]
+    build:
+      context: .
+      dockerfile: packages/viewer/Dockerfile
+    environment:
+      ENGRAM_INFRA: local
+      DATABASE_URL: postgres://engram:engram@postgres:5432/engram
+      QWEN_MOCK: "true"
+      VIEWER_PORT: "8080"
+      # VIEWER_TOKEN: set in a shared/cloud deploy to gate the read API
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy

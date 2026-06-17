@@ -1,0 +1,69 @@
+{
+  "tenant": "eval-1594f752-5082-4f52-828e-7fcef56612b4",
+  "mode": "mock-qwen",
+  "generatedAt": "2026-06-16T15:45:50.425Z",
+  "before": {
+    "activeEpisodes": 13,
+    "notes": 0,
+    "entities": 0,
+    "edges": 0,
+    "forgotten": 0
+  },
+  "after": {
+    "activeEpisodes": 10,
+    "notes": 1,
+    "entities": 2,
+    "edges": 1,
+    "forgotten": 0
+  },
+  "sleep": {
+    "episodesScanned": 13,
+    "clusters": 11,
+    "consolidated": 1,
+    "entitiesMerged": 2,
+    "edgesMerged": 1,
+    "forgotten": 0,
+    "contradictionsResolved": 0,
+    "connectionsSynthesized": 0,
+    "tokensUsed": 250,
+    "costCents": 0.05
+  },
+  "sleepStatus": "completed",
+  "retrieval": {
+    "recallAtK_before": {
+      "recall": 100,
+      "hits": 4,
+      "total": 4,
+      "avgTokens": 142,
+      "p95Ms": 8.05
+    },
+    "recallAtK_after_retention": {
+      "recall": 75,
+      "hits": 3,
+      "total": 4,
+      "avgTokens": 135,
+      "p95Ms": 2.91
+    },
+    "crossChannelRecall_before": true,
+    "crossChannelRecall_after": true,
+    "forgetPrecision": 0,
+    "forgotten": "0/2"
+  },
+  "budgeterAblation": {
+    "withBudgeter_tightBudget": {
+      "recall": 100,
+      "hits": 4,
+      "total": 4,
+      "avgTokens": 142,
+      "p95Ms": 2.61
+    },
+    "relevanceOnly_noCap": {
+      "recall": 100,
+      "hits": 4,
+      "total": 4,
+      "avgTokens": 142,
+      "p95Ms": 2.83
+    },
+    "tokenSavings": "0 fewer tokens/query with budgeter"
+  }
+}

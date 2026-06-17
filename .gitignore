@@ -1,0 +1,33 @@
+# dependencies & build output
+node_modules/
+dist/
+dist-web/
+*.tsbuildinfo
+coverage/
+
+# secrets & env (keep the templates)
+.env
+.env.local
+.env.*.local
+deploy/alibaba/.env.alibaba
+
+# local runtime state / docker volumes / engram.sh pidfiles+logs
+.data/
+*.log
+logs/
+
+# eval outputs
+packages/eval/out/
+
+# nanoclaw runtime / installation-specific (never commit)
+nanoclaw-v2/data/
+nanoclaw-v2/logs/
+nanoclaw-v2/groups/
+nanoclaw-v2/.env
+nanoclaw-v2/repo-tokens/
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

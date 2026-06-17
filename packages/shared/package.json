@@ -1,0 +1,23 @@
+{
+  "name": "@engram/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared infra interfaces, Qwen client, types, and observability for Engram.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  }
+}
