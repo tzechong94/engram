@@ -85,7 +85,8 @@ cmd_up() {
   wait_for_pg
   step "applying database migrations"; pnpm --filter @engram/memory migrate >/dev/null 2>&1 && c_g "  migrations applied"
   step "building packages"; pnpm run build >/dev/null 2>&1 && c_g "  build complete"
-  step "seeding a demo tenant (running the eval harness)"; pnpm --filter @engram/eval start >/dev/null 2>&1 && c_g "  demo memory seeded → packages/eval/out/report.md"
+  # No demo seeding — the viewer shows ONLY real memory (from the agent / your usage).
+  # Run the eval explicitly for metrics: ./engram.sh eval
 
   # (re)start the brain viewer in the background
   kill_port "$VIEWER_PORT"
@@ -171,9 +172,21 @@ EOF
 }
 
 cmd_eval()  { load_env; pnpm --filter @engram/eval start; }
-cmd_sleep() { load_env
-  local t; t=$(pnpm --filter @engram/eval start 2>/dev/null | grep -oE 'eval-[a-f0-9-]+' | head -1 || true)
-  step "forcing a sleep/REM cycle for $t"; FORCE=1 TENANT="$t" pnpm --filter @engram/memory sleep; }
+cmd_sleep() { load_env; step "running the sleep/REM scheduler (Ctrl+C to stop)"; pnpm --filter @engram/memory sleep; }
+
+# Manually trigger a "dream" (REM cycle) now, with verbose step-by-step logs so you
+# can watch it think. Usage: ./engram.sh dream [tenant-id]  (defaults to newest tenant)
+cmd_dream() { load_env
+  local t="${2:-${TENANT:-}}"
+  if [ -z "$t" ]; then
+    t=$(docker exec engram-postgres-1 psql -U engram -d engram -tAc "SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1;" 2>/dev/null | tr -d '[:space:]')
+  fi
+  if [ -z "$t" ]; then
+    c_r "No tenant found. Chat with the agent first, or pass one: ./engram.sh dream <tenant-id>"; exit 1
+  fi
+  c_b "💤 dreaming for tenant: $t  (verbose)"
+  FORCE=1 TENANT="$t" ENGRAM_LOG_LEVEL=info pnpm --filter @engram/memory sleep
+}
 cmd_status() {
   port_up "$VIEWER_PORT" && c_g "viewer: running → http://localhost:$VIEWER_PORT" || c_y "viewer: stopped"
   pgrep -f "sleep-worker" >/dev/null 2>&1 && c_g "sleep scheduler: running" || c_y "sleep scheduler: stopped"
@@ -188,7 +201,8 @@ case "${1:-up}" in
   test) cmd_test ;;
   eval) cmd_eval ;;
   sleep) cmd_sleep ;;
+  dream) cmd_dream "$@" ;;
   status) cmd_status ;;
   logs) cmd_logs ;;
-  *) echo "usage: ./engram.sh [up|agent|down|test|eval|sleep|status|logs]"; exit 1 ;;
+  *) echo "usage: ./engram.sh [up|agent|dream|down|test|eval|sleep|status|logs]"; exit 1 ;;
 esac

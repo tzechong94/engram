@@ -57,19 +57,27 @@ export class SleepPhase {
     this.maxSynthesisPairs = opts.maxSynthesisPairs ?? 10;
   }
 
+  /** Verbose "dreaming" narration — one info line per meaningful step so you can
+   *  watch the REM cycle think. Always on (the cycle is rare + worth seeing). */
+  private dream(msg: string, ctx?: Record<string, unknown>): void {
+    log.info(`💤 ${msg}`, ctx);
+  }
+
   /** Run a full cycle for one tenant. Returns the stats report. */
   async run(tenantId: string): Promise<{ cycleId: string; status: string; stats: SleepCycleStats; before: unknown; after: unknown }> {
-    const before = await this.repo.memoryStats(tenantId);
+    const before = (await this.repo.memoryStats(tenantId)) as { activeEpisodes: number; notes: number; entities: number };
     const cycleId = await this.repo.createSleepCycle(tenantId);
     const stats = emptyStats();
     const budget = { tokens: 0 };
     let status = 'completed';
-    log.info('sleep cycle start', { tenantId, cycleId });
+    this.dream(`entering REM cycle for tenant ${tenantId}`, { activeEpisodes: before.activeEpisodes, notes: before.notes, entities: before.entities });
 
     try {
       // 1. FORGET SWEEP first — prune stale, low-value episodes before consolidation
       //    so junk never pollutes the durable notes (prune, then consolidate).
+      this.dream('① forgetting — decaying stale, low-value memories…');
       stats.forgotten = await this.forgetSweep(tenantId);
+      this.dream(`   forgot ${stats.forgotten} stale memories`);
       await this.checkpoint(cycleId, 'forget', stats);
 
       // 2. CLUSTER the survivors
@@ -77,9 +85,11 @@ export class SleepPhase {
       stats.episodesScanned = episodes.length;
       const clusters = clusterByEmbedding(episodes, this.clusterThreshold);
       stats.clusters = clusters.length;
+      this.dream(`② clustering — grouped ${episodes.length} episodes into ${clusters.length} clusters (sizes: ${clusters.map((c) => c.length).join(', ')})`);
       await this.checkpoint(cycleId, 'cluster', stats);
 
       // 2. CONSOLIDATE (+ collect notes for later steps)
+      this.dream('③ consolidating — turning clustered episodes into durable semantic notes…');
       const newNotes: Array<{ id: string; title: string; body: string; embedding: number[] | null }> = [];
       for (const cluster of clusters) {
         if (cluster.length < 2) continue; // singletons stay as episodes
@@ -93,10 +103,12 @@ export class SleepPhase {
           newNotes.push(note);
         }
       }
+      this.dream(`   wrote ${stats.consolidated} semantic notes`);
       await this.checkpoint(cycleId, 'consolidate', stats);
 
       // 3. GRAPH MERGE
       if (status !== 'partial') {
+        this.dream('④ graph-merge — extracting entities + relationships into the knowledge graph…');
         for (const note of newNotes) {
           if (this.overBudget(budget, stats)) {
             status = 'partial';
@@ -106,24 +118,30 @@ export class SleepPhase {
           stats.entitiesMerged += merged.entities;
           stats.edgesMerged += merged.edges;
         }
+        this.dream(`   merged ${stats.entitiesMerged} entities, ${stats.edgesMerged} edges`);
         await this.checkpoint(cycleId, 'graph', stats);
       }
 
       // 5. RECONCILE CONTRADICTIONS
       if (status !== 'partial') {
+        this.dream('⑤ reconciling — checking notes for contradictions to resolve…');
         stats.contradictionsResolved = await this.reconcile(tenantId, budget, stats);
+        this.dream(`   resolved ${stats.contradictionsResolved} contradictions (invalidated the stale side)`);
         await this.checkpoint(cycleId, 'reconcile', stats);
       }
 
       // 6. SYNTHESIZE NEW CONNECTIONS
       if (status !== 'partial') {
+        this.dream('⑥ synthesizing — looking for new connections across notes…');
         stats.connectionsSynthesized = await this.synthesize(tenantId, budget, stats);
+        this.dream(`   synthesized ${stats.connectionsSynthesized} new connections`);
         await this.checkpoint(cycleId, 'synthesize', stats);
       }
 
       // 7. CORE PROFILE — maintain the bounded human-readable per-tenant profile
       //    (the "learned context" the agent reads first). Cheap, always attempted.
       if (!this.overBudget(budget, stats)) {
+        this.dream('⑦ profile — rewriting the learned per-tenant profile…');
         await this.maintainCoreProfile(tenantId, budget);
         await this.checkpoint(cycleId, 'profile', stats);
       }
@@ -138,8 +156,8 @@ export class SleepPhase {
     // deletes/noops were tallied during that step.
     stats.memoryOps.add = stats.consolidated + stats.connectionsSynthesized;
     await this.repo.finishSleepCycle(cycleId, status, stats);
-    const after = await this.repo.memoryStats(tenantId);
-    log.info('sleep cycle done', { tenantId, cycleId, status, stats });
+    const after = (await this.repo.memoryStats(tenantId)) as { activeEpisodes: number; notes: number; entities: number };
+    this.dream(`woke up (${status}) — episodes ${before.activeEpisodes}→${after.activeEpisodes}, notes ${before.notes}→${after.notes}, entities ${before.entities}→${after.entities}; spent ${stats.tokensUsed} tokens (${stats.costCents.toFixed(3)}¢)`);
     return { cycleId, status, stats, before, after };
   }
 
@@ -176,6 +194,7 @@ export class SleepPhase {
       kind: 'consolidation',
     });
     await this.repo.markConsolidated(tenantId, cluster.map((e) => e.id), noteId);
+    this.dream(`   • "${parsed.title}" ← ${cluster.length} memories (importance ${parsed.importance ?? 7}/10)`);
 
     // Archive the raw episodic content to encrypted cold blob (recoverable, off hot path).
     await this.blob
@@ -236,7 +255,10 @@ export class SleepPhase {
         },
         this.opts.forgetThreshold,
       );
-      if (d.forget) toForget.push(e.id);
+      if (d.forget) {
+        toForget.push(e.id);
+        this.dream(`   • forgetting "${e.content.slice(0, 60)}" (${d.reason})`);
+      }
     }
     await this.repo.forgetEpisodes(tenantId, toForget);
     return toForget.length;
@@ -263,6 +285,7 @@ export class SleepPhase {
         await this.repo.recordContradiction(tenantId, a.id, b.id, parsed.resolution || `kept ${parsed.keep}`);
         await this.repo.supersedeNote(tenantId, loser.id, winner.id); // invalidates (bi-temporal)
         stats.memoryOps.delete++; // Mem0-style: the stale memory is removed from the active set
+        this.dream(`   • contradiction: "${loser.title}" superseded by "${winner.title}"${parsed.resolution ? ` — ${parsed.resolution}` : ''}`);
         resolved++;
       } else {
         stats.memoryOps.noop++;
@@ -298,6 +321,7 @@ export class SleepPhase {
           sourceEpisodeIds: [],
           kind: 'synthesis',
         });
+        this.dream(`   • new connection: "${parsed.title}"`);
         created++;
       }
     }
