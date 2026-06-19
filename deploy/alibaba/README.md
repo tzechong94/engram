@@ -1,45 +1,76 @@
 # Deploying Engram to Alibaba Cloud
 
-Engram is local-first: the same code runs on the docker-compose stack or on Alibaba by
-swapping config (`ENGRAM_INFRA=alibaba` + cloud connection strings). Nothing in the code
-hardcodes a cloud endpoint — every dependency is behind a `packages/shared` interface.
+Two paths. **Start with v1 (single VM)** — it's the fastest live deploy and is faithful to
+how Engram runs locally. Graduate to managed services later for scale/HA.
 
-## Service mapping (local → cloud)
+## Why a VM (not serverless)
+nanoclaw spawns a Docker container per chat session — so the runtime needs Docker. Function
+Compute can't spawn sibling containers. One ECS VM with Docker runs the whole thing exactly
+like your laptop.
 
-| Local (docker-compose) | Alibaba managed service | Engram component |
-|------------------------|-------------------------|------------------|
-| Postgres + pgvector | **AnalyticDB for PostgreSQL** (or DashVector for vectors) | memory store + vectors |
-| Redis | **Tair** | hot tier / session state |
-| MinIO | **OSS** | cold archive (encrypted blobs) |
-| node-cron (in-process) | **EventBridge → Function Compute** | sleep-phase schedule |
-| local processes | **SAE** or **Function Compute** | agent runtime + memory MCP + sleep worker |
-| — | **API Gateway** | channel webhooks (WhatsApp/WeChat) |
-| env / `.env` | **KMS** + OneCLI vault | secrets |
-| stdout JSON logs | **SLS** + **ARMS** | logs + traces |
+## v1 — single ECS VM (recommended) 🚀
 
-## What to deploy
+The entire local stack (Postgres+pgvector, Redis, MinIO, the viewer, and the nanoclaw
+agent) runs on one VM. No managed services required to go live.
 
-1. **Memory service** (`packages/memory`): the MCP server + the sleep worker. On Alibaba,
-   run the MCP server alongside each agent runtime (SAE sidecar / same FC service) and the
-   sleep worker as a Function Compute function triggered by EventBridge (per-tenant nightly
-   + inactivity). Point `DATABASE_URL` at AnalyticDB.
-2. **Agent runtime** (`nanoclaw-v2`): the per-session Qwen Code containers. Deploy on SAE
-   (one isolated container per session) or Function Compute. `provider=qwen`, DashScope key
-   from KMS/OneCLI.
-3. **Channels:** API Gateway routes WhatsApp/WeChat webhooks into the runtime; Telegram can
-   stay long-polling.
+### 1. Provision (your Alibaba account)
+- **ECS instance:** Ubuntu 22.04, ~4 vCPU / 8–16 GB RAM, ESSD system disk (≥40 GB). Enable
+  **automatic snapshots** (session state + memory live on this disk in v1).
+- **Security group inbound:** `22` (SSH), `8080` (viewer — lock to your IP, or front with SLB
+  + `VIEWER_TOKEN`). Outbound: open (Telegram polling + Qwen API).
 
-## Steps
+### 2. Bootstrap the VM
+```bash
+ssh <user>@<vm-ip>
+curl -fsSL https://raw.githubusercontent.com/tzechong94/engram/main/deploy/alibaba/bootstrap.sh | bash
+```
+Installs Docker + Node + pnpm, clones the repo, creates `.env`.
 
-1. Provision: AnalyticDB for PostgreSQL (enable the `vector` extension), Tair, an OSS
-   bucket, a KMS key, an ACR repo. Note their endpoints/credentials.
-2. Copy `.env.alibaba.example` → `.env.alibaba`, fill in the cloud values, set
-   `ENGRAM_INFRA=alibaba` and a real `ENGRAM_ENCRYPTION_KEY`.
-3. Build + push the agent image to ACR (`./container/build.sh` then `docker push`).
-4. Run migrations against AnalyticDB: `DATABASE_URL=... pnpm --filter @engram/memory migrate`.
-5. Deploy the three components (SAE/FC). Wire the EventBridge → FC sleep schedule.
-6. Smoke test, then record the deploy proof.
+### 3. Configure + launch
+```bash
+cd ~/engram
+nano .env       # DASHSCOPE_API_KEY=..., QWEN_MOCK=false, VIEWER_TOKEN=..., ENGRAM_MEMORY_DB_URL=...
+./engram.sh     # boots infra + migrations + viewer + sleep; seeds a demo tenant
+```
+Viewer: `http://<vm-ip>:8080/?token=<VIEWER_TOKEN>`.
 
-`deploy.sh` is the entrypoint `make deploy` calls — it validates config and walks the
-above. Actual `aliyun`/`fun`/`sae` CLI calls are gated on your account credentials (the
-script checks for them and prints the exact commands if absent).
+### 4. Survive reboots (optional)
+```bash
+sudo cp deploy/alibaba/engram.service /etc/systemd/system/
+sudo sed -i "s|__USER__|$USER|g; s|__DIR__|$HOME/engram|g" /etc/systemd/system/engram.service
+sudo systemctl enable --now engram
+```
+
+### 5. Chat agent (optional)
+`./engram.sh agent`, then the guided steps (channel install, bot token, wire memory, host).
+Linux note: the spawned agent container reaches the Postgres container via the docker bridge
+gateway, so set `ENGRAM_MEMORY_DB_URL=postgres://engram:engram@172.17.0.1:5433/engram` (the
+installer warns if it sees `host.docker.internal` on Linux).
+
+That's a live deployment. Cost: the VM + your Qwen usage (pennies for memory, see the eval's
+measured `costCents`).
+
+## v2 — managed services (scale/HA upgrade)
+When you outgrow one VM, move state off it:
+
+| v1 (on the VM) | v2 (managed) | component |
+|---|---|---|
+| Postgres+pgvector container | **AnalyticDB for PostgreSQL** (enable `vector`) | memory store |
+| Redis container | **Tair** | hot tier |
+| MinIO container | **OSS** | cold archive |
+| `.env` on disk | **KMS** | secrets |
+| node-cron sleep | **EventBridge → Function Compute** | scheduled REM cycle |
+| viewer on :8080 | **SLB** (+ token) | viewer ingress |
+| stdio memory MCP | **HTTP memory service** (connection pooling) | memory transport at concurrency |
+
+Steps: provision the managed services → set `ENGRAM_INFRA=alibaba` + point `DATABASE_URL` at
+AnalyticDB in `.env` → `pnpm --filter @engram/memory migrate` → keep the agent runtime on the
+VM (it still needs Docker) but its memory + state now live in managed services. `deploy.sh`
+validates config and scaffolds this path. True horizontal scale (nanoclaw spawning pods on
+ACK/Kubernetes) is a further, separate change.
+
+## Files here
+- `bootstrap.sh` — one-shot VM setup (v1).
+- `engram.service` — systemd unit (v1).
+- `.env.alibaba.example` — managed-services env template (v2).
+- `deploy.sh` — config validator + managed-services deploy scaffold (v2).
