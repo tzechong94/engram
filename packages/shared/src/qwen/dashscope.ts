@@ -91,18 +91,27 @@ export class DashScopeQwenClient implements QwenClient {
   }
 
   async rerank(query: string, documents: string[]): Promise<RerankItem[]> {
-    if (documents.length === 0) return [];
-    // DashScope rerank uses the native (non-OpenAI) text rerank API shape.
-    const json = (await this.post('/rerank', {
-      model: this.cfg.rerankModel,
-      query,
-      documents,
-      top_n: documents.length,
-    })) as { results?: Array<{ index: number; relevance_score: number }> };
-    const results = json.results ?? [];
-    return results
-      .map((r) => ({ index: r.index, score: r.relevance_score }))
-      .sort((a, b) => b.score - a.score);
+    // Rerank is optional — set QWEN_RERANK_MODEL='' to disable (recall still works
+    // via vector+keyword+PPR+budgeter). DashScope rerank is NOT on the OpenAI-
+    // compatible endpoint; it lives on the native text-rerank service, with a
+    // different URL + request/response shape. Derive the native base from the
+    // compatible-mode base.
+    if (documents.length === 0 || !this.cfg.rerankModel) return [];
+    const nativeBase = this.cfg.baseUrl.replace(/\/compatible-mode\/v1\/?$/, '/api/v1');
+    const url = `${nativeBase}/services/rerank/text-rerank/text-rerank`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.cfg.apiKey}` },
+      body: JSON.stringify({
+        model: this.cfg.rerankModel,
+        input: { query, documents },
+        parameters: { top_n: documents.length, return_documents: false },
+      }),
+    });
+    if (!res.ok) throw new Error(`DashScope rerank ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    const json = (await res.json()) as { output?: { results?: Array<{ index: number; relevance_score: number }> } };
+    const results = json.output?.results ?? [];
+    return results.map((r) => ({ index: r.index, score: r.relevance_score })).sort((a, b) => b.score - a.score);
   }
 }
 
