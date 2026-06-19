@@ -70,5 +70,22 @@ button.primary { background: linear-gradient(180deg, #155e63, #0c3a40); border-c
 .legend { position: absolute; bottom: 12px; left: 12px; display: flex; gap: 14px; font-size: 11px; color: var(--muted); background: rgba(8,10,16,0.6); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+
+/* Brain ⇄ Files toggle */
+.toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.toggle button { border: none; border-radius: 0; background: var(--panel-2); padding: 7px 12px; }
+.toggle button.on { background: linear-gradient(180deg, #155e63, #0c3a40); color: #d7fff7; }
+
+/* Files view: tree + content pane */
+.files { display: grid; grid-template-columns: 300px 1fr; min-height: 0; height: 100%; }
+.filetree { border-right: 1px solid var(--border); overflow-y: auto; padding: 10px; font-size: 13px; }
+.folder { margin-bottom: 10px; }
+.foldername { color: var(--accent); font-weight: 600; margin: 6px 0 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.filerow { padding: 3px 8px; border-radius: 6px; cursor: pointer; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.filerow:hover { background: var(--panel-2); }
+.filerow.on { background: #11343a; color: #d7fff7; }
+.filecontent { overflow-y: auto; padding: 16px 20px; min-width: 0; }
+.filehead { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--neuron); margin-bottom: 10px; }
+.filecontent pre { white-space: pre-wrap; word-break: break-word; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; color: var(--text); font-size: 13px; line-height: 1.6; }
 .muted { color: var(--muted); }
 .pill { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }

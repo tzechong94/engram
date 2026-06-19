@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { api, type GraphLink, type GraphNode, type SleepCycle, type SearchResult, type Stats, type CoreBlock } from './api';
+import { api, type GraphLink, type GraphNode, type SleepCycle, type SearchResult, type Stats, type CoreBlock, type Note, type Episode } from './api';
 
 /**
  * Engram brain viewer. The knowledge graph is rendered as a neural net: entities
@@ -19,6 +19,9 @@ export function App() {
   const [result, setResult] = useState<SearchResult | null>(null);
   const [activated, setActivated] = useState<Set<string>>(new Set());
   const [selectedCycle, setSelectedCycle] = useState<SleepCycle | null>(null);
+  const [view, setView] = useState<'brain' | 'files'>('brain');
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
   const fgRef = useRef<any>(null);
 
   useEffect(() => {
@@ -34,6 +37,8 @@ export function App() {
     api.overview(t).then((r) => setStats(r.stats)).catch(() => setStats(null));
     api.cycles(t).then((r) => setCycles(r.cycles)).catch(() => setCycles([]));
     api.core(t).then((r) => setCore(r.blocks)).catch(() => setCore([]));
+    api.notes(t).then((r) => setNotes(r.notes)).catch(() => setNotes([]));
+    api.episodes(t).then((r) => setEpisodes(r.episodes)).catch(() => setEpisodes([]));
     setResult(null); setActivated(new Set());
   }, []);
 
@@ -81,6 +86,10 @@ export function App() {
           {tenants.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
         <button onClick={() => load(tenant)}>↻ refresh</button>
+        <div className="toggle">
+          <button className={view === 'brain' ? 'on' : ''} onClick={() => setView('brain')}>🧠 Brain</button>
+          <button className={view === 'files' ? 'on' : ''} onClick={() => setView('files')}>🗂 Files</button>
+        </div>
         <div className="spacer" />
         <span className="muted">{stats ? `${stats.entities} neurons · ${stats.edges} synapses · ${stats.notes} notes` : '—'}</span>
       </div>
@@ -155,6 +164,9 @@ export function App() {
           </div>
         </div>
 
+        {view === 'files' ? (
+          <FilesView core={core} notes={notes} episodes={episodes} entities={graph.nodes} cycles={cycles} />
+        ) : (
         <div className="graphwrap">
           {graph.nodes.length === 0 ? (
             <div className="empty" style={{ paddingTop: 80 }}>
@@ -185,6 +197,55 @@ export function App() {
             <span><i style={{ background: '#3a4154' }} /> invalidated</span>
           </div>
         </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Files view — the brain's contents browsed as a folder tree. Same memory as the
+ * graph, a different lens: core profile, semantic notes, entities, raw episodes,
+ * and sleep-cycle reports become files you can open and read.
+ */
+interface VFile { path: string; content: string; meta?: string }
+function FilesView({ core, notes, episodes, entities, cycles }: {
+  core: CoreBlock[]; notes: Note[]; episodes: Episode[]; entities: GraphNode[]; cycles: SleepCycle[];
+}) {
+  const slug = (s: string) => (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+  const folders: Array<{ name: string; files: VFile[] }> = [
+    { name: 'core', files: core.map((b) => ({ path: `${b.label}.md`, content: b.body, meta: b.pinned ? 'pinned' : b.readOnly ? 'read-only' : '' })) },
+    { name: 'notes', files: notes.map((n) => ({ path: `${slug(n.title)}.md`, content: `# ${n.title}\n\n${n.body}`, meta: `${n.kind ?? 'note'} · importance ${n.importance}` })) },
+    { name: 'entities', files: entities.map((e) => ({ path: `${slug(e.name)}`, content: `${e.name}\ntype: ${e.type}\nsalience: ${(e.val - 1).toFixed(2)}`, meta: e.type })) },
+    { name: 'episodes', files: episodes.map((ep) => ({ path: `${ep.createdAt.slice(0, 10)}-${ep.id.slice(0, 6)}.txt`, content: ep.content, meta: `${ep.sourceChannel} · ${ep.status}` })) },
+    { name: 'sleep-cycles', files: cycles.map((c) => ({ path: `${c.startedAt.slice(0, 16).replace('T', ' ')}.json`, content: JSON.stringify(c.stats, null, 2), meta: c.status })) },
+  ];
+  const [sel, setSel] = useState<VFile | null>(null);
+
+  return (
+    <div className="files">
+      <div className="filetree">
+        {folders.map((f) => (
+          <div key={f.name} className="folder">
+            <div className="foldername">{f.name}/ <span className="muted">{f.files.length}</span></div>
+            {f.files.length === 0 && <div className="filerow muted">(empty)</div>}
+            {f.files.map((file) => (
+              <div key={f.name + file.path} className={`filerow ${sel?.path === file.path && sel?.content === file.content ? 'on' : ''}`} onClick={() => setSel(file)} title={file.meta}>
+                {file.path}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="filecontent">
+        {sel ? (
+          <>
+            <div className="filehead">{sel.path}{sel.meta ? <span className="pill">{sel.meta}</span> : null}</div>
+            <pre>{sel.content}</pre>
+          </>
+        ) : (
+          <div className="empty" style={{ paddingTop: 60 }}>Pick a file to read what the brain knows.</div>
+        )}
       </div>
     </div>
   );
