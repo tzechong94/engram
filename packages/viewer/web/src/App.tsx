@@ -22,6 +22,11 @@ export function App() {
   const [view, setView] = useState<'brain' | 'files'>('brain');
   const [notes, setNotes] = useState<Note[]>([]);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [dreaming, setDreaming] = useState(false);
+  const [dreamMsg, setDreamMsg] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
   const fgRef = useRef<any>(null);
 
   useEffect(() => {
@@ -55,6 +60,52 @@ export function App() {
     setActivated(hot);
     if (fgRef.current) fgRef.current.zoomToFit(600, 60);
   };
+
+  const runDream = async () => {
+    if (!tenant || dreaming) return;
+    setDreaming(true);
+    setDreamMsg('💤 dreaming… clustering, consolidating, reconciling, synthesizing');
+    try {
+      const r = await api.sleep(tenant);
+      const s = (r.report?.stats ?? {}) as Record<string, number>;
+      setDreamMsg(
+        `✅ dream complete — +${s.consolidated ?? 0} notes · +${s.connectionsSynthesized ?? 0} links · ` +
+        `${s.entitiesMerged ?? 0} neurons merged · −${s.forgotten ?? 0} forgotten`,
+      );
+      load(tenant);
+    } catch (e) {
+      setDreamMsg(`⚠ ${e instanceof Error ? e.message : 'sleep failed'}`);
+    } finally {
+      setDreaming(false);
+    }
+  };
+
+  const onUpload = async (file: File | undefined) => {
+    if (!file || !tenant || uploading) return;
+    setUploading(true);
+    setUploadMsg(`📄 ingesting ${file.name}…`);
+    try {
+      const r = await api.uploadDoc(tenant, file);
+      setUploadMsg(`✅ ${r.filename} — ${r.chunks} chunks embedded into memory`);
+      load(tenant);
+    } catch (e) {
+      setUploadMsg(`⚠ ${e instanceof Error ? e.message : 'upload failed'}`);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  // Uploaded documents, grouped from doc-kind notes by source filename.
+  const documents = (() => {
+    const m = new Map<string, number>();
+    for (const n of notes) {
+      if (n.kind !== 'document') continue;
+      const name = n.title.split(' · part ')[0]!;
+      m.set(name, (m.get(name) ?? 0) + 1);
+    }
+    return [...m.entries()].map(([name, chunks]) => ({ name, chunks }));
+  })();
 
   const profile = core.find((b) => b.label === 'profile');
 
@@ -149,7 +200,26 @@ export function App() {
           </div>
 
           <div className="card">
+            <h3>Documents (RAG)</h3>
+            <input ref={fileRef} type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+              disabled={uploading || !tenant}
+              onChange={(e) => onUpload(e.target.files?.[0])}
+              style={{ width: '100%', marginBottom: 8 }} />
+            {uploadMsg && <div className="trace" style={{ marginBottom: 8 }}>{uploadMsg}</div>}
+            {documents.length === 0
+              ? <div className="empty">no documents yet — upload a .txt, .md, or .pdf the agent can answer from</div>
+              : documents.map((d) => (
+                  <div key={d.name} className="mem"><span className="pill">{d.chunks} chunks</span> {d.name}</div>
+                ))}
+          </div>
+
+          <div className="card">
             <h3>Sleep cycles (REM)</h3>
+            <button className="primary" disabled={dreaming || !tenant} onClick={runDream}
+              style={{ width: '100%', marginBottom: 8 }}>
+              {dreaming ? '💤 dreaming…' : '💤 Dream now (run sleep cycle)'}
+            </button>
+            {dreamMsg && <div className="trace" style={{ marginBottom: 8 }}>{dreamMsg}</div>}
             {cycles.length === 0 && <div className="empty">no cycles yet — run a sleep cycle</div>}
             {cycles.map((c) => {
               const s = c.stats as any;
@@ -209,13 +279,31 @@ export function App() {
  * and sleep-cycle reports become files you can open and read.
  */
 interface VFile { path: string; content: string; meta?: string }
+
+/** Reassemble uploaded documents (stored as doc-kind note chunks) into one file each. */
+function groupDocs(notes: Note[]): VFile[] {
+  const docs = new Map<string, { body: string }[]>();
+  for (const n of notes) {
+    if (n.kind !== 'document') continue;
+    const name = n.title.split(' · part ')[0]!;
+    if (!docs.has(name)) docs.set(name, []);
+    docs.get(name)!.push({ body: n.body });
+  }
+  return [...docs.entries()].map(([name, parts]) => ({
+    path: name,
+    content: parts.map((p) => p.body).join('\n\n'),
+    meta: `${parts.length} chunks`,
+  }));
+}
+
 function FilesView({ core, notes, episodes, entities, cycles }: {
   core: CoreBlock[]; notes: Note[]; episodes: Episode[]; entities: GraphNode[]; cycles: SleepCycle[];
 }) {
   const slug = (s: string) => (s || 'untitled').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
   const folders: Array<{ name: string; files: VFile[] }> = [
     { name: 'core', files: core.map((b) => ({ path: `${b.label}.md`, content: b.body, meta: b.pinned ? 'pinned' : b.readOnly ? 'read-only' : '' })) },
-    { name: 'notes', files: notes.map((n) => ({ path: `${slug(n.title)}.md`, content: `# ${n.title}\n\n${n.body}`, meta: `${n.kind ?? 'note'} · importance ${n.importance}` })) },
+    { name: 'documents', files: groupDocs(notes) },
+    { name: 'notes', files: notes.filter((n) => n.kind !== 'document').map((n) => ({ path: `${slug(n.title)}.md`, content: `# ${n.title}\n\n${n.body}`, meta: `${n.kind ?? 'note'} · importance ${n.importance}` })) },
     { name: 'entities', files: entities.map((e) => ({ path: `${slug(e.name)}`, content: `${e.name}\ntype: ${e.type}\nsalience: ${(e.val - 1).toFixed(2)}`, meta: e.type })) },
     { name: 'episodes', files: episodes.map((ep) => ({ path: `${ep.createdAt.slice(0, 10)}-${ep.id.slice(0, 6)}.txt`, content: ep.content, meta: `${ep.sourceChannel} · ${ep.status}` })) },
     { name: 'sleep-cycles', files: cycles.map((c) => ({ path: `${c.startedAt.slice(0, 16).replace('T', ' ')}.json`, content: JSON.stringify(c.stats, null, 2), meta: c.status })) },

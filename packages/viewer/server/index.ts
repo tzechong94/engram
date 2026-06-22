@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInfra, createQwenClient, loadConfig, createLogger } from '@engram/shared';
-import { MemoryService } from '@engram/memory';
+import { MemoryService, SleepPhase } from '@engram/memory';
 
 const log = createLogger('viewer');
 const PORT = Number(process.env.VIEWER_PORT || 8080);
@@ -31,6 +31,14 @@ const qwen = createQwenClient(cfg.qwen);
 const memory = new MemoryService(infra.store, qwen, infra.queue);
 const repo = memory.repository;
 
+// Manual sleep/REM trigger for the viewer's "Dream now" button. Single-flight:
+// one cycle at a time per process so a double-click can't run two in parallel.
+const sleepPhase = new SleepPhase(infra.store, qwen, infra.blob, {
+  costCapCents: cfg.sleep.costCapCents,
+  forgetThreshold: cfg.sleep.forgetThreshold,
+});
+let sleeping = false;
+
 function json(res: http.ServerResponse, body: unknown, status = 200): void {
   const s = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -41,6 +49,37 @@ function authed(req: http.IncomingMessage, url: URL): boolean {
   if (!TOKEN) return true;
   const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   return bearer === TOKEN || url.searchParams.get('token') === TOKEN;
+}
+
+/** Collect a raw request body into a Buffer, with a size cap. */
+function readBody(req: http.IncomingMessage, limit = 30 * 1024 * 1024): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new Error('file too large (max 30MB)'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+/** Extract plain text from an uploaded file buffer by extension. */
+async function extractText(filename: string, buf: Buffer): Promise<string> {
+  if (filename.toLowerCase().endsWith('.pdf')) {
+    // Import the lib entry directly — pdf-parse's index.js runs debug code that
+    // reads a sample PDF off disk and throws when imported as the package main.
+    const mod = await import('pdf-parse/lib/pdf-parse.js');
+    const pdfParse = (mod.default ?? mod) as (b: Buffer) => Promise<{ text: string }>;
+    return (await pdfParse(buf)).text;
+  }
+  return buf.toString('utf8'); // .txt / .md / anything textual
 }
 
 const MIME: Record<string, string> = {
@@ -103,6 +142,32 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const budget = Number(url.searchParams.get('budget') || 1500);
       if (!q) return json(res, { error: 'q required' }, 400);
       return json(res, await memory.search({ tenantId: tenant, query: q, tokenBudget: budget }));
+    }
+    case 'upload': {
+      // Ingest an uploaded document as durable RAG knowledge for this tenant.
+      if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
+      const filename = decodeURIComponent(String(req.headers['x-filename'] || 'upload.txt'));
+      const buf = await readBody(req);
+      const text = await extractText(filename, buf);
+      if (!text.trim()) return json(res, { error: 'no extractable text in file' }, 400);
+      const result = await memory.ingestDocument({ tenantId: tenant, filename, text });
+      log.info('document ingested', { tenant, ...result });
+      return json(res, result);
+    }
+    case 'sleep': {
+      // The one write the viewer allows: manually run a sleep/REM cycle now.
+      if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
+      if (sleeping) return json(res, { error: 'a sleep cycle is already running' }, 409);
+      sleeping = true;
+      try {
+        const before = await repo.memoryStats(tenant);
+        const report = await sleepPhase.run(tenant);
+        const after = await repo.memoryStats(tenant);
+        log.info('manual sleep cycle complete', { tenant, status: report.status });
+        return json(res, { report, before, after });
+      } finally {
+        sleeping = false;
+      }
     }
     default:
       return json(res, { error: `unknown resource: ${resource}` }, 404);

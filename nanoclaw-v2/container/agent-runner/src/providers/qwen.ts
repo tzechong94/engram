@@ -38,14 +38,98 @@ import type {
 const QWEN_BIN = process.env.QWEN_BIN || 'qwen';
 const QWEN_MODE = (process.env.QWEN_MODE || 'acp').toLowerCase();
 
-const SESSION_INVALID_RE = /session.*(not found|unknown|invalid|expired)|no such session/i;
+// An ACP session id from a prior daemon is gone after a container respawn (the
+// daemon is in-memory). qwen-code reports this as JSON-RPC code -32002
+// "Resource not found: session:<id>". JsonRpcPeer rejects with
+// new Error(JSON.stringify(error)), so the message holds the code and text.
+// Word order ("not found" before "session") varies, so test code + both terms
+// independently rather than a session-first regex.
+const SESSION_INVALID_TERMS = /not found|unknown|invalid|expired|no such/i;
 
 const CONVERSATIONAL_PREAMBLE =
-  'You are a warm, concise personal assistant reached over chat (Telegram/WhatsApp/WeChat). ' +
-  'You are NOT a coding tool. Converse naturally. You have a long-term memory available as ' +
-  'MCP tools (mcp__memory__write / mcp__memory__search / mcp__memory__forget): proactively ' +
-  'SEARCH memory before answering personal questions, and WRITE memory when the user shares ' +
-  'something worth remembering across conversations. Never mention tools or internal mechanics.';
+  'You are Engram, a warm, concise personal assistant reached over chat (Telegram/WhatsApp/WeChat). ' +
+  'You are NOT a coding tool. Converse naturally and keep replies short. ' +
+  'You have a persistent long-term memory. When relevant past context exists it is provided to you ' +
+  'automatically below under "Relevant memories" — use it naturally, as if you simply remember the ' +
+  'person. You also have memory tools (write, search, forget) you may call when useful — for example, ' +
+  'call forget when the user asks you to forget or corrects a fact. Never mention tools, memory, or ' +
+  'the fact that you looked anything up.';
+
+/**
+ * Minimal MCP stdio client — spawns a one-shot connection to an MCP server,
+ * runs the initialize handshake, calls a single tool, and returns the joined
+ * text content. Used by the provider's DETERMINISTIC memory path (recall before
+ * a turn, capture after), which does not depend on the model deciding to call
+ * the memory tools. The @modelcontextprotocol/sdk stdio transport speaks
+ * newline-delimited JSON-RPC, so we frame messages with '\n'.
+ *
+ * Best-effort by contract: callers swallow errors so a memory hiccup never
+ * breaks a chat turn. Short-lived (one tool call per spawn) for simplicity and
+ * isolation; chat latency tolerates the ~200ms server startup.
+ */
+async function callMemoryStdioTool(
+  cfg: McpServerConfig,
+  tool: string,
+  args: Record<string, unknown>,
+  timeoutMs = 20000,
+): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(cfg.command, cfg.args ?? [], {
+      env: { ...process.env, ...(cfg.env ?? {}) },
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    let buf = '';
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
+      fn();
+    };
+    const timer = setTimeout(() => finish(() => reject(new Error('memory tool timeout'))), timeoutMs);
+    const send = (obj: unknown): void => {
+      try {
+        child.stdin.write(JSON.stringify(obj) + '\n');
+      } catch {
+        /* server gone */
+      }
+    };
+    child.on('error', (e) => finish(() => reject(e)));
+    child.stdout.on('data', (d: Buffer) => {
+      buf += d.toString();
+      let nl: number;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let msg: { id?: number; result?: { content?: Array<{ text?: string }> } };
+        try {
+          msg = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (msg.id === 2) {
+          const text = (msg.result?.content ?? []).map((c) => c.text ?? '').join('\n').trim();
+          finish(() => resolve(text));
+        }
+      }
+    });
+    // Handshake → tool call. id:1 initialize, then the call as id:2.
+    send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'engram-runner', version: '1' } },
+    });
+    send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: args } });
+  });
+}
 
 export class QwenProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
@@ -65,11 +149,63 @@ export class QwenProvider implements AgentProvider {
 
   isSessionInvalid(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err);
-    return SESSION_INVALID_RE.test(msg);
+    if (msg.includes('-32002')) return true;
+    return /session/i.test(msg) && SESSION_INVALID_TERMS.test(msg);
   }
 
   query(input: QueryInput): AgentQuery {
     return QWEN_MODE === 'oneshot' ? this.queryOneShot(input) : this.queryAcp(input);
+  }
+
+  // ── Deterministic memory (recall before a turn, capture after) ───────────────
+  // The conversational model cannot be relied on to call the memory tools, so
+  // Engram drives memory itself: search for relevant context and inject it, then
+  // write the user's turn into the pipeline. Reuses the same `memory` MCP server
+  // the agent is wired to, so there is one source of truth. All best-effort.
+
+  private get memoryCfg(): McpServerConfig | undefined {
+    return this.mcpServers['memory'];
+  }
+
+  /**
+   * Strip NanoClaw's inbound envelope to the user's actual words. The prompt
+   * arrives as `<context .../>\n<message ...>BODY</message>`; we store/search on
+   * BODY so memory stays clean (better embeddings, readable viewer, better
+   * sleep consolidation). Falls back to tag-stripping if the shape changes.
+   */
+  private cleanUserText(raw: string): string {
+    if (!raw) return '';
+    const bodies: string[] = [];
+    const re = /<message\b[^>]*>([\s\S]*?)<\/message>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) bodies.push(m[1]);
+    const text = bodies.length ? bodies.join('\n') : raw.replace(/<[^>]+>/g, ' ');
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  /** Recall relevant memories for the user's message; returns a context block or ''. */
+  private async recallContext(userText: string): Promise<string> {
+    const cfg = this.memoryCfg;
+    if (!cfg || !userText.trim()) return '';
+    try {
+      const recalled = await callMemoryStdioTool(cfg, 'search', { query: userText });
+      if (!recalled) return '';
+      return `Relevant memories about the user (use naturally; do not say you looked them up):\n${recalled}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /** Write the user's message into memory. Fire-and-forget; never blocks a turn. */
+  private captureTurn(userText: string, channel?: string): void {
+    const cfg = this.memoryCfg;
+    if (!cfg || !userText.trim()) return;
+    void callMemoryStdioTool(cfg, 'write', {
+      content: userText,
+      ...(channel ? { source_channel: channel } : {}),
+    }).catch(() => {
+      /* best-effort capture */
+    });
   }
 
   // ── ACP daemon mode ────────────────────────────────────────────────────────
@@ -105,10 +241,21 @@ export class QwenProvider implements AgentProvider {
       });
 
       try {
-        await rpc.request('initialize', {
+        const initRes = (await rpc.request('initialize', {
           protocolVersion: 1,
           clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-        });
+        })) as { authMethods?: Array<{ id?: string }> };
+
+        // ACP requires selecting an auth method before opening a session when
+        // the agent advertises any. Qwen Code talks to Model Studio's
+        // OpenAI-compatible endpoint via OPENAI_API_KEY (mapped from
+        // DASHSCOPE_API_KEY in childEnv) — that's the "openai" method.
+        const authMethods = initRes?.authMethods ?? [];
+        if (authMethods.length > 0) {
+          const methodId =
+            authMethods.find((m) => m.id === 'openai')?.id ?? authMethods[0]?.id ?? 'openai';
+          await rpc.request('authenticate', { methodId });
+        }
 
         // session/update notifications stream the turn; bridge them to events.
         rpc.onNotification('session/update', (params) => {
@@ -143,12 +290,15 @@ export class QwenProvider implements AgentProvider {
 
         const promptOnce = async (text: string) => {
           queue.beginTurn();
-          const fullPrompt = instructions ? `${instructions}\n\n${text}` : text;
+          const clean = this.cleanUserText(text);
+          const memory = await this.recallContext(clean);
+          const fullPrompt = [instructions, memory, text].filter(Boolean).join('\n\n');
           const res = (await rpc.request('session/prompt', {
             sessionId,
             prompt: [{ type: 'text', text: fullPrompt }],
           })) as { stopReason?: string };
           queue.endTurn(res?.stopReason);
+          this.captureTurn(clean, 'telegram');
         };
 
         await promptOnce(input.prompt);
@@ -195,9 +345,12 @@ export class QwenProvider implements AgentProvider {
     let current: ChildProcess | null = null;
     const instructions = [CONVERSATIONAL_PREAMBLE, input.systemContext?.instructions].filter(Boolean).join('\n\n');
 
-    const runPrompt = (text: string): Promise<void> =>
-      new Promise((resolve) => {
-        const args = ['--yolo', '-p', instructions ? `${instructions}\n\n${text}` : text];
+    const runPrompt = async (text: string): Promise<void> => {
+      const clean = this.cleanUserText(text);
+      const memory = await this.recallContext(clean);
+      const composed = [instructions, memory, text].filter(Boolean).join('\n\n');
+      await new Promise<void>((resolve) => {
+        const args = ['--yolo', '-p', composed];
         if (this.model) args.push('-m', this.model);
         const proc = spawn(QWEN_BIN, args, { cwd: input.cwd, env: this.childEnv(input), stdio: ['ignore', 'pipe', 'pipe'] });
         current = proc;
@@ -212,6 +365,8 @@ export class QwenProvider implements AgentProvider {
           resolve();
         });
       });
+      this.captureTurn(clean, 'telegram');
+    };
 
     const run = async () => {
       // No persistent session in one-shot; continuation is a synthetic marker.
@@ -247,6 +402,13 @@ export class QwenProvider implements AgentProvider {
     if (env.DASHSCOPE_API_KEY && !env.OPENAI_API_KEY) env.OPENAI_API_KEY = env.DASHSCOPE_API_KEY;
     if (!env.OPENAI_BASE_URL && env.DASHSCOPE_BASE_URL) env.OPENAI_BASE_URL = env.DASHSCOPE_BASE_URL;
     if (this.model) env.QWEN_MODEL = this.model;
+    // Qwen Code auto-selects the "openai" auth type ONLY when all three of
+    // OPENAI_API_KEY, OPENAI_MODEL, and OPENAI_BASE_URL are present in the env
+    // (getAuthTypeFromEnv in modelConfigUtils). The ACP daemon, unlike the
+    // oneshot `-p` path, won't fall back to QWEN_MODEL for this check — so we
+    // must set OPENAI_MODEL explicitly. Fall back to the group model, then the
+    // host-threaded QWEN_MODEL, so a group with no explicit model still works.
+    if (!env.OPENAI_MODEL) env.OPENAI_MODEL = this.model || env.QWEN_MODEL;
     void input;
     return env;
   }

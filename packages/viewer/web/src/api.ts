@@ -9,6 +9,13 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function post<T>(path: string): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: 'POST', headers: auth() });
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(body?.error || `${path} → ${res.status}`);
+  return body as T;
+}
+
 export interface GraphNode { id: string; name: string; type: string; val: number }
 export interface GraphLink { source: string; target: string; relation: string; weight: number; invalidated: boolean }
 export interface Stats { activeEpisodes: number; notes: number; entities: number; edges: number; forgotten: number }
@@ -32,4 +39,16 @@ export const api = {
   core: (t: string) => get<{ blocks: CoreBlock[] }>(`/${encodeURIComponent(t)}/core`),
   search: (t: string, q: string, budget = 1500) =>
     get<SearchResult>(`/${encodeURIComponent(t)}/search?q=${encodeURIComponent(q)}&budget=${budget}`),
+  sleep: (t: string) =>
+    post<{ report: SleepCycle; before: Stats; after: Stats }>(`/${encodeURIComponent(t)}/sleep`),
+  uploadDoc: async (t: string, file: File) => {
+    const res = await fetch(`/api/${encodeURIComponent(t)}/upload`, {
+      method: 'POST',
+      headers: { ...auth(), 'X-Filename': encodeURIComponent(file.name) },
+      body: file,
+    });
+    const body = (await res.json().catch(() => ({}))) as { filename: string; chunks: number; embedded: number; error?: string };
+    if (!res.ok) throw new Error(body?.error || `upload → ${res.status}`);
+    return body;
+  },
 };

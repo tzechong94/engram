@@ -26,6 +26,7 @@ export interface SemanticNote {
   confidence: number;
   importance: number;
   sourceEpisodeIds: string[];
+  kind: string; // consolidation | synthesis | document
   createdAt: string;
   updatedAt: string;
   version: number;

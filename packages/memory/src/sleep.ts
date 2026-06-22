@@ -265,7 +265,8 @@ export class SleepPhase {
   }
 
   private async reconcile(tenantId: string, budget: { tokens: number }, stats: SleepCycleStats): Promise<number> {
-    const notes = await this.repo.activeNotes(tenantId);
+    // Uploaded documents are durable reference material — never reconcile/supersede them.
+    const notes = (await this.repo.activeNotes(tenantId)).filter((n) => n.kind !== 'document');
     const pairs = highSimilarityPairs(notes, 0.6, this.maxReconcilePairs);
     let resolved = 0;
     for (const [a, b] of pairs) {
@@ -295,7 +296,8 @@ export class SleepPhase {
   }
 
   private async synthesize(tenantId: string, budget: { tokens: number }, stats: SleepCycleStats): Promise<number> {
-    const notes = await this.repo.activeNotes(tenantId);
+    // Exclude documents — synthesis links insights between learned notes, not raw reference chunks.
+    const notes = (await this.repo.activeNotes(tenantId)).filter((n) => n.kind !== 'document');
     // Candidate pairs: moderately related (some overlap) but not near-duplicate.
     const pairs = midSimilarityPairs(notes, 0.3, 0.6, this.maxSynthesisPairs);
     let created = 0;
@@ -329,7 +331,8 @@ export class SleepPhase {
   }
 
   private async maintainCoreProfile(tenantId: string, budget: { tokens: number }): Promise<void> {
-    const notes = await this.repo.activeNotes(tenantId);
+    // Profile is built from learned notes about the user, not uploaded reference docs.
+    const notes = (await this.repo.activeNotes(tenantId)).filter((n) => n.kind !== 'document');
     if (notes.length === 0) return;
     const top = [...notes].sort((a, b) => b.importance - a.importance).slice(0, 15);
     const bullets = top.map((n) => `- ${n.title}: ${n.body}`).join('\n');

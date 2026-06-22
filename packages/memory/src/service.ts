@@ -103,6 +103,82 @@ export class MemoryService {
   }
 
   /**
+   * Ingest an uploaded document as durable, searchable knowledge (the RAG path).
+   * Chunks the text, embeds each chunk, and stores them as semantic notes with
+   * kind 'document'. Durable by design: documents are reference material, so the
+   * forget sweep and the sleep reconcile both skip kind 'document' — they are
+   * never decayed or rewritten. The chunks join the SAME recall candidate pool
+   * the agent already searches every turn, so retrieval is automatic: ask about
+   * something only in the file and the matching chunk surfaces in context. No
+   * separate RAG pipeline.
+   */
+  async ingestDocument(args: {
+    tenantId: string;
+    filename: string;
+    text: string;
+  }): Promise<{ filename: string; chunks: number; embedded: number }> {
+    const tenantId = args.tenantId;
+    const text = args.text.replace(/\r\n/g, '\n').trim();
+    if (!text) throw new Error('ingestDocument: empty text');
+    await this.repo.ensureTenant(tenantId);
+
+    const chunks = this.chunkText(text);
+    let embeddings: number[][] = [];
+    try {
+      embeddings = await this.qwen.embed(chunks);
+    } catch (err) {
+      log.warn('embed failed on document ingest; storing chunks without embeddings', {
+        tenantId,
+        err: String(err),
+      });
+    }
+
+    let embedded = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      const emb = embeddings[i] ?? null;
+      if (emb) embedded++;
+      await this.repo.insertNote({
+        tenantId,
+        title: `${args.filename} · part ${i + 1}/${chunks.length}`,
+        body: chunks[i]!,
+        embedding: emb,
+        confidence: 0.9,
+        importance: 0.8,
+        sourceEpisodeIds: [],
+        kind: 'document',
+      });
+    }
+
+    log.info('memory.ingestDocument', { tenantId, filename: args.filename, chunks: chunks.length, embedded });
+    return { filename: args.filename, chunks: chunks.length, embedded };
+  }
+
+  /** Split text into ~maxChars chunks on paragraph boundaries, with overlap for context continuity. */
+  private chunkText(text: string, maxChars = 2400, overlap = 200): string[] {
+    const clean = text.replace(/\n{3,}/g, '\n\n').trim();
+    if (!clean) return [];
+    if (clean.length <= maxChars) return [clean];
+    const paras = clean.split(/\n\n+/);
+    const chunks: string[] = [];
+    let cur = '';
+    const flush = (): void => {
+      if (cur.trim()) chunks.push(cur.trim());
+      cur = '';
+    };
+    for (const p of paras) {
+      if (p.length > maxChars) {
+        flush();
+        for (let i = 0; i < p.length; i += maxChars - overlap) chunks.push(p.slice(i, i + maxChars));
+        continue;
+      }
+      if ((cur + '\n\n' + p).length > maxChars) flush();
+      cur = cur ? cur + '\n\n' + p : p;
+    }
+    flush();
+    return chunks;
+  }
+
+  /**
    * Hybrid recall → rerank → context budgeter. Returns the packed memories AND
    * the full packing trace (the demo surfaces the trace). Bumps access on every
    * episode that made the pack (feeds the decay/forget signal).
