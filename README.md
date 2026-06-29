@@ -12,6 +12,25 @@ separable MCP service. (It's the same core the Desk SMB product reuses.)
 
 > Qwen Cloud Hackathon · Track 1 (MemoryAgent) · MIT.
 
+## See it in 60 seconds
+
+```bash
+pnpm --filter @engram/viewer start        # brain viewer on http://localhost:8080
+```
+
+Open it and hit **▶ Demo**. It self-runs the whole story, no driving needed:
+teach 3 facts → **Ask both brains** (with-memory answers, no-memory shrugs) → 💤 Dream
+(graph consolidates) → change a fact → Dream again → ask again, and it answers the **new**
+value with the old one gone. Or use **Teach Engram** to feed it your own facts and watch.
+
+**Prove it** — the memory layer passes a 10-dimension eval gate, 3× on real Qwen, all green
+(recall, *timely forgetting*, *limited-context recall*, contradiction/update resolution, RAG,
+no-confabulation, ~200ms p95). The numbers show live in the viewer's **Proof** panel:
+
+```bash
+QWEN_MOCK=false DASHSCOPE_API_KEY=sk-... EVAL_RUNS=3 pnpm --filter @engram/eval evals
+```
+
 ## What's here
 
 ```
@@ -21,7 +40,7 @@ engram/
                           Qwen client (DashScope, behind an interface + offline mock)
   packages/eval/       ← eval harness: retrieval + consolidation metrics, before/after report
   packages/viewer/     ← brain-themed memory viewer: read-only API + React neural-graph UI
-  nanoclaw-v2/         ← agent runtime: NanoClaw with the engine swapped Claude → Qwen Code
+  nanoclaw-v2/         ← agent runtime: NanoClaw, running on Qwen Code (DashScope)
   deploy/alibaba/      ← config-swap deploy to Alibaba Cloud
   docker-compose.yml   ← local stack: Postgres+pgvector, Redis, MinIO (+ viewer profile)
 ```

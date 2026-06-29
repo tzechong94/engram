@@ -1,4 +1,4 @@
-# Engram: Personal Agent with a Self-Managing Cloud Memory (Claude Code Build Brief)
+# Engram: Personal Agent with a Self-Managing Cloud Memory (Build Brief)
 
 Track 1: MemoryAgent. Qwen Cloud Hackathon.
 
@@ -6,10 +6,10 @@ Mission: a cloud-hosted personal agent, codename Engram, that the user reaches t
 
 ## Starting point: the NanoClaw repo
 
-The user will provide the NanoClaw repository, a self-hosted agent with Telegram and WhatsApp integration. NanoClaw works by wrapping Claude Code as its embedded engine: it pipes inbound messages to a Claude Code process and relays the result back to the channel. Your primary adaptation is to swap that embedded engine from Claude Code to Qwen Code, the analogous open-source terminal agent that runs Qwen models and already provides the agent loop, tool calling, MCP, SubAgents, and Skills. This is an engine swap, not a model-client rewrite.
+The user will provide the NanoClaw repository, a self-hosted agent with Telegram and WhatsApp integration. NanoClaw wraps a terminal coding-agent as its embedded engine: it pipes inbound messages to that engine process and relays the result back to the channel. We run **Qwen Code** as the engine, the open-source terminal agent that runs Qwen models and provides the agent loop, tool calling, MCP, SubAgents, and Skills. This is an engine integration, not a model-client rewrite.
 
 Concretely:
-- Keep NanoClaw's channel adapters and its wrapper pattern. Repoint the engine from Claude Code to Qwen Code, driven the same way NanoClaw drives Claude Code now (non-interactive invocation, or Qwen Code's daemon mode which exposes ACP over HTTP and SSE). Do not rebuild the channel and wrapper plumbing.
+- Keep NanoClaw's channel adapters and its wrapper pattern. Drive the engine with Qwen Code (non-interactive invocation, or Qwen Code's daemon mode which exposes ACP over HTTP and SSE). Do not rebuild the channel and wrapper plumbing.
 - Point the Qwen Code harness at a general Qwen model (Qwen-Max or the current Qwen3 Plus) via Model Studio, not at Qwen3-Coder, because this is a conversational personal assistant, not a coding tool. Give it a conversational system prompt or Skill so it does not behave like a dev agent.
 - Wire the cloud memory layer in as an MCP server that Qwen Code connects to. Memory tools are reached over MCP; do not bake memory into the engine.
 - Keep the memory boundary clean: Qwen Code holds the session and working context, the cloud memory layer holds the durable long-term memory, and the agent reaches long-term memory by calling the MCP tools. The sleep phase operates on the durable memory only.
@@ -49,7 +49,7 @@ Build it to run fully on the developer's machine first, then deploy the same cod
 
 A monorepo, TypeScript and Node throughout. Packages:
 - `memory`: the MCP memory server with the online path and the sleep phase. The separable core that Desk reuses.
-- `agent-runtime`: the cloud agent, the NanoClaw wrapper with its embedded engine swapped from Claude Code to Qwen Code (pointed at a general Qwen model).
+- `agent-runtime`: the cloud agent, the NanoClaw wrapper with Qwen Code as its embedded engine (pointed at a general Qwen model).
 - `shared`: the Qwen client wrapper, shared types, observability, the infra interfaces.
 
 Local: docker-compose (Postgres+pgvector, Redis, MinIO). Cloud: SAE or Function Compute for the runtime and memory service, AnalyticDB for PostgreSQL or DashVector for vectors, Tair for the hot tier and session state, OSS for the cold archive, Function Compute plus EventBridge for async indexing and the scheduled sleep phase, API Gateway for the channel webhooks, SLS and ARMS for observability.
@@ -79,11 +79,11 @@ All channels are cloud-native and used through official APIs; the user talks to 
 
 ## Build plan (phases; stream letters can run in parallel)
 
-- Phase 0, Scaffold (local): monorepo, the three packages, `CLAUDE.md`, `ARCHITECTURE.md` stub, MIT, `.env.example`, CI, the docker-compose local stack, the imported NanoClaw wrapper with the Qwen Code engine wired in, the shared Qwen client and observability and infra interfaces, MCP host and client, and the auth skeleton. Done when it boots locally, a Telegram bot (polling) round-trips a message through the engine, and the eval harness runs.
+- Phase 0, Scaffold (local): monorepo, the three packages, the agent config file, `ARCHITECTURE.md` stub, MIT, `.env.example`, CI, the docker-compose local stack, the imported NanoClaw wrapper with the Qwen Code engine wired in, the shared Qwen client and observability and infra interfaces, MCP host and client, and the auth skeleton. Done when it boots locally, a Telegram bot (polling) round-trips a message through the engine, and the eval harness runs.
 - Phase 1, Online memory path (Stream A): schema, the storage interfaces (local pgvector, Redis, MinIO), lightweight episodic write plus embedding, idempotent writes (content-hash dedup), dead-letter queue.
 - Phase 2, Retrieval and budgeter (Stream B): hybrid recall, rerank, budgeter, packing trace exposed, p95 latency target met.
 - Phase 3, Sleep phase (Stream C): the scheduled per-user REM cycle. Consolidation and graph merge, the forgetting sweep, batch contradiction reconciliation, synthesis. Checkpointed and cost-bounded. This is the centerpiece, give it the most attention.
-- Phase 4, Agent runtime on Qwen Code (Stream D): repoint NanoClaw's embedded engine from Claude Code to Qwen Code (general Qwen model, conversational system prompt), the pluggable channel adapters (Telegram and WhatsApp first), skills, per-user isolated sessions, and the memory-aware write and recall policy over MCP.
+- Phase 4, Agent runtime on Qwen Code (Stream D): run NanoClaw's embedded engine on Qwen Code (general Qwen model, conversational system prompt), the pluggable channel adapters (Telegram and WhatsApp first), skills, per-user isolated sessions, and the memory-aware write and recall policy over MCP.
 - Phase 5, Multi-tenant hardening, web signup and channel linking, encryption and isolation.
 - Phase 6, Deploy to Alibaba (swap config), capture the deploy proof, run the eval on cloud, record the demo.
 

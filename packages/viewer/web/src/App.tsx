@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { api, type GraphLink, type GraphNode, type SleepCycle, type SearchResult, type Stats, type CoreBlock, type Note, type Episode } from './api';
+import { api, type GraphLink, type GraphNode, type SleepCycle, type SleepTraceEntry, type SearchResult, type Stats, type CoreBlock, type Note, type Episode, type AnswerResult, type EvalReport } from './api';
 
 /**
  * Engram brain viewer. The knowledge graph is rendered as a neural net: entities
@@ -26,6 +26,14 @@ export function App() {
   const [dreamMsg, setDreamMsg] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
+  // Interactive playground + two-brains + proof + demo mode
+  const [ask, setAsk] = useState('');
+  const [answer, setAnswer] = useState<AnswerResult | null>(null);
+  const [answering, setAnswering] = useState(false);
+  const [teachText, setTeachText] = useState('');
+  const [teachMsg, setTeachMsg] = useState('');
+  const [evals, setEvals] = useState<EvalReport | null>(null);
+  const [demo, setDemo] = useState<{ running: boolean; step: string }>({ running: false, step: '' });
   const fileRef = useRef<HTMLInputElement>(null);
   const fgRef = useRef<any>(null);
 
@@ -96,6 +104,83 @@ export function App() {
     }
   };
 
+  // Two-brains: same question answered WITH Engram memory vs a cold model.
+  const runAnswer = async (qOverride?: string) => {
+    const q = (qOverride ?? ask).trim();
+    if (!tenant || !q || answering) return;
+    setAnswering(true);
+    setAnswer(null);
+    try {
+      setAnswer(await api.answer(tenant, q));
+    } catch (e) {
+      setAnswer({ withMemory: `⚠ ${e instanceof Error ? e.message : 'failed'}`, withoutMemory: '', recalled: [] });
+    } finally {
+      setAnswering(false);
+    }
+  };
+
+  // Interactive: teach Engram a fact (writes one episode), then refresh.
+  const doTeach = async (textOverride?: string) => {
+    const c = (textOverride ?? teachText).trim();
+    if (!tenant || !c) return;
+    setTeachMsg('✍️ teaching…');
+    try {
+      await api.teach(tenant, c);
+      setTeachMsg(`✅ remembered: "${c}"`);
+      setTeachText('');
+      load(tenant);
+    } catch (e) {
+      setTeachMsg(`⚠ ${e instanceof Error ? e.message : 'failed'}`);
+    }
+  };
+
+  // Demo Mode: the self-running "documentary" — teach → ask → dream → update → dream → ask.
+  const runDemo = async () => {
+    if (demo.running) return;
+    const T = 'demo';
+    setTenant(T);
+    setDemo({ running: true, step: '' });
+    const narrate = (s: string) => setDemo((d) => ({ ...d, step: s }));
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    try {
+      narrate('① Teaching Engram three facts about you…');
+      await api.teach(T, 'My flight is tomorrow at 6pm');
+      await api.teach(T, 'I am vegetarian and never eat meat');
+      await api.teach(T, "My dog's name is Rocky, a golden retriever");
+      load(T);
+      await wait(1400);
+      narrate('② Ask both brains "when is my flight?" — only the one with memory knows.');
+      setAsk('when is my flight');
+      await runAnswer('when is my flight');
+      await wait(3200);
+      narrate('③ 💤 Engram sleeps — consolidating raw episodes into durable memory…');
+      await api.sleep(T);
+      load(T);
+      await wait(1600);
+      narrate('④ You change your mind: "actually my flight moved to 8pm."');
+      await api.teach(T, 'Actually my flight moved to 8pm, not 6pm');
+      load(T);
+      await wait(1200);
+      narrate('⑤ 💤 Sleeping again to reconcile the update (old fact superseded)…');
+      await api.sleep(T);
+      load(T);
+      await wait(1600);
+      narrate('⑥ Ask again "when is my flight?" — Engram says 8pm. The old 6pm is gone.');
+      await runAnswer('when is my flight');
+      await wait(800);
+      narrate('✅ It learned, then updated. A memory that gets more accurate over time.');
+    } catch (e) {
+      narrate(`⚠ ${e instanceof Error ? e.message : 'demo failed'}`);
+    } finally {
+      setDemo((d) => ({ ...d, running: false }));
+    }
+  };
+
+  // Load the eval gate proof (tenant-independent, but the route needs a segment).
+  useEffect(() => {
+    api.evals(tenant || 'proof').then(setEvals).catch(() => setEvals(null));
+  }, [tenant]);
+
   // Uploaded documents, grouped from doc-kind notes by source filename.
   const documents = (() => {
     const m = new Map<string, number>();
@@ -131,7 +216,7 @@ export function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <div className="brand">engram <span className="dot">●</span> memory brain</div>
+        <div className="brand">engram <span className="dot">●</span> <span className="tag">drop-in memory for any agent</span></div>
         <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
           {tenants.length === 0 && <option value="">no tenants</option>}
           {tenants.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -141,9 +226,13 @@ export function App() {
           <button className={view === 'brain' ? 'on' : ''} onClick={() => setView('brain')}>🧠 Brain</button>
           <button className={view === 'files' ? 'on' : ''} onClick={() => setView('files')}>🗂 Files</button>
         </div>
+        <button className="demo-btn" disabled={demo.running} onClick={runDemo}>
+          {demo.running ? '▶ running demo…' : '▶ Demo'}
+        </button>
         <div className="spacer" />
         <span className="muted">{stats ? `${stats.entities} neurons · ${stats.edges} synapses · ${stats.notes} notes` : '—'}</span>
       </div>
+      {demo.step && <div className="demobanner">{demo.step}</div>}
 
       <div className="main">
         <div className="side">
@@ -159,6 +248,57 @@ export function App() {
               </div>
             ) : <div className="empty">select a tenant</div>}
           </div>
+
+          <div className="card">
+            <h3>Ask both brains <span className="muted">(memory vs none)</span></h3>
+            <div className="search-row">
+              <input placeholder="ask a question about you…" value={ask}
+                onChange={(e) => setAsk(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && runAnswer()} />
+              <button className="primary" disabled={answering || !tenant} onClick={() => runAnswer()}>
+                {answering ? '…' : 'ask'}
+              </button>
+            </div>
+            {answering && <div className="trace">thinking, with + without memory…</div>}
+            {answer && (
+              <div className="twobrains">
+                <div className="brain with">
+                  <div className="blabel">🧠 with Engram</div>
+                  <div className="btext">{answer.withMemory || '—'}</div>
+                </div>
+                <div className="brain without">
+                  <div className="blabel">🌫 no memory</div>
+                  <div className="btext">{answer.withoutMemory || '—'}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h3>Teach Engram</h3>
+            <div className="search-row">
+              <input placeholder='tell it a fact, e.g. "my flight is at 6pm"' value={teachText}
+                onChange={(e) => setTeachText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && doTeach()} />
+              <button className="primary" disabled={!tenant} onClick={() => doTeach()}>teach</button>
+            </div>
+            {teachMsg && <div className="trace">{teachMsg}</div>}
+            <div className="trace muted">then 💤 Dream to consolidate, and "Ask both brains" to recall it.</div>
+          </div>
+
+          {evals && evals.gates && (
+            <div className="card">
+              <h3>Proof · {evals.gates.filter((g) => g.pass).length}/{evals.gates.length} eval gates {evals.runs ? `(${evals.runs}× ${evals.mode})` : ''}</h3>
+              <div className="gates">
+                {evals.gates.map((g) => (
+                  <div key={g.name} className={`gate ${g.pass ? 'pass' : 'fail'}`} title={g.value}>
+                    <span>{g.pass ? '✅' : '❌'}</span> <span className="gname">{g.name}</span>
+                    <span className="gval">{g.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {profile && (
             <div className="card">
@@ -189,10 +329,18 @@ export function App() {
                   weights rel {result.trace.weights.relevance} / rec {result.trace.weights.recency} / imp {result.trace.weights.importance} / div {result.trace.weights.diversity}
                 </div>
                 {result.trace.candidates.slice(0, 6).map((c) => (
-                  <div key={c.id} className="trace" title={c.content}>
-                    <span style={{ color: c.included ? 'var(--neuron)' : 'var(--muted)' }}>{c.included ? '✓' : '·'}</span>{' '}
-                    {c.kind} score {c.score.toFixed(2)}
-                    <div className="bar"><span style={{ width: `${Math.round(c.score * 100)}%` }} /></div>
+                  <div key={c.id} className="cand" title={c.content}>
+                    <div className="candhead">
+                      <span className={c.included ? 'inc' : 'drop'}>{c.included ? '✓ kept' : '· dropped'}</span>
+                      <span className="muted">{c.kind} · {c.tokens}t · score {c.score.toFixed(2)}</span>
+                    </div>
+                    <div className="dims">
+                      {([['rel', c.relevance], ['rec', c.recency], ['imp', c.importance], ['div', c.diversity]] as const).map(([k, v]) => (
+                        <span key={k} className="dim" title={`${k} ${(v ?? 0).toFixed(2)}`}>
+                          {k}<i style={{ width: `${Math.round((v ?? 0) * 100)}%` }} />
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </>
@@ -339,24 +487,82 @@ function FilesView({ core, notes, episodes, entities, cycles }: {
   );
 }
 
+// Human label + glyph for each dream step, in execution order.
+const STEP_META: Record<string, { glyph: string; label: string }> = {
+  enter: { glyph: '🌙', label: 'Enter REM' },
+  forget: { glyph: '①', label: 'Forget — decay stale memories' },
+  cluster: { glyph: '②', label: 'Cluster — group related episodes' },
+  consolidate: { glyph: '③', label: 'Consolidate — write durable notes' },
+  graph: { glyph: '④', label: 'Graph-merge — entities & relationships' },
+  reconcile: { glyph: '⑤', label: 'Reconcile — resolve contradictions' },
+  synthesize: { glyph: '⑥', label: 'Synthesize — find new connections' },
+  profile: { glyph: '⑦', label: 'Profile — rewrite learned profile' },
+  wake: { glyph: '🌅', label: 'Wake' },
+};
+const STEP_ORDER = Object.keys(STEP_META);
+
 function CycleDetail({ cycle }: { cycle: SleepCycle }) {
   const s = cycle.stats as any;
+  const trace = cycle.checkpoint?.trace ?? [];
+  // Group the narration lines by step, preserving execution order.
+  const groups = STEP_ORDER
+    .map((step) => ({ step, ...STEP_META[step]!, lines: trace.filter((t) => t.step === step) }))
+    .filter((g) => g.lines.length > 0);
+
   return (
-    <div className="beforeafter">
-      <div className="col">
-        <div className="muted">scanned</div>
-        <div style={{ fontSize: 18, fontWeight: 700 }}>{s.episodesScanned ?? 0}</div>
-        <div className="muted">episodes</div>
-      </div>
-      <div className="arrow">→ sleep →</div>
-      <div className="col">
-        <div className="muted">produced</div>
-        <div style={{ fontSize: 13 }}>
-          {s.consolidated ?? 0} notes · {s.entitiesMerged ?? 0} neurons<br />
-          {s.connectionsSynthesized ?? 0} new links · {s.forgotten ?? 0} forgotten<br />
-          {s.contradictionsResolved ?? 0} contradictions resolved
+    <div className="cycledetail">
+      <div className="beforeafter">
+        <div className="col">
+          <div className="muted">scanned</div>
+          <div style={{ fontSize: 18, fontWeight: 700 }}>{s.episodesScanned ?? 0}</div>
+          <div className="muted">episodes</div>
+        </div>
+        <div className="arrow">→ sleep →</div>
+        <div className="col">
+          <div className="muted">produced</div>
+          <div style={{ fontSize: 13 }}>
+            {s.consolidated ?? 0} notes · {s.entitiesMerged ?? 0} neurons<br />
+            {s.connectionsSynthesized ?? 0} new links · {s.forgotten ?? 0} forgotten<br />
+            {s.contradictionsResolved ?? 0} contradictions resolved
+          </div>
         </div>
       </div>
+
+      {groups.length > 0 ? (
+        <div className="steps">
+          <div className="muted" style={{ margin: '10px 0 6px' }}>
+            What the brain did, step by step
+            {s.tokensUsed ? <span className="pill" style={{ marginLeft: 6 }}>{s.tokensUsed} tokens · {(s.costCents ?? 0).toFixed(3)}¢</span> : null}
+          </div>
+          {groups.map((g) => <StepGroup key={g.step} glyph={g.glyph} label={g.label} lines={g.lines} />)}
+        </div>
+      ) : (
+        <div className="empty" style={{ padding: '10px 0', fontSize: 12 }}>
+          No step trace for this cycle (it predates trace capture — run a new sleep cycle to see the breakdown).
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepGroup({ glyph, label, lines }: { glyph: string; label: string; lines: SleepTraceEntry[] }) {
+  const [open, setOpen] = useState(true);
+  // The first line is the step headline; the rest are per-item details (• …).
+  const [head, ...details] = lines;
+  return (
+    <div className="step">
+      <div className="stephead" onClick={() => setOpen((o) => !o)}>
+        <span className="stepglyph">{glyph}</span>
+        <span className="steplabel">{label}</span>
+        {details.length > 0 && <span className="pill">{details.length}</span>}
+        <span className="muted" style={{ marginLeft: 'auto', fontSize: 11 }}>{open ? '▾' : '▸'}</span>
+      </div>
+      {open && (
+        <div className="stepbody">
+          {head && <div className="stepline">{head.msg}</div>}
+          {details.map((d, i) => <div key={i} className="stepline detail">{d.msg}</div>)}
+        </div>
+      )}
     </div>
   );
 }

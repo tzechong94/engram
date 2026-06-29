@@ -8,6 +8,50 @@ that Desk (Track 4) reuses.
 
 ## System diagram
 
+### Rendered (Mermaid)
+
+```mermaid
+flowchart TB
+  User["👤 User · Telegram / WhatsApp / WeChat"]
+
+  subgraph AGENT["Agent runtime · NanoClaw (vendored framework) — engine = Qwen Code"]
+    ADAPT["Channel adapters"] --> ROUTER["Router · per-user session"] --> RUNNER["Agent-runner · Qwen provider (ACP)"]
+  end
+
+  QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen3-coder · embeddings · rerank"]
+
+  subgraph ENGRAM["⭐ Engram memory layer · MCP server — THE JUDGED CONTRIBUTION (100% Qwen)"]
+    direction TB
+    ONLINE["Online path (hot): write · search · forget"]
+    RECALL["Hybrid recall: vector + keyword + graph-PPR<br/>→ rerank → token budgeter → packed context + trace"]
+    SLEEP["💤 Sleep / REM cycle (offline):<br/>forget → cluster → consolidate → graph-merge<br/>→ reconcile (bi-temporal) → synthesize → profile"]
+    ONLINE --> RECALL
+  end
+
+  subgraph STORE["Storage · local ↔ Alibaba Cloud (config swap)"]
+    PG[("Postgres + pgvector<br/>episodes · notes · entities · edges · profile · sleep_cycles")]
+    REDIS[("Redis / Tair · queue")]
+    BLOB[("Blob / OSS · encrypted cold archive")]
+  end
+
+  VIEWER["🧠 Viewer · graph · dream trace · two-brains · live proof"]
+  EVAL["✅ Eval · 10-gate suite · 3× real Qwen · all green"]
+
+  User <--> ADAPT
+  RUNNER <-->|reason| QWEN
+  RUNNER -->|"MCP · write / search / forget"| ONLINE
+  ONLINE <--> PG
+  RECALL -. embed + rerank .-> QWEN
+  SLEEP <--> PG
+  SLEEP -. consolidate + reconcile .-> QWEN
+  ONLINE -.-> BLOB
+  ONLINE --> REDIS
+  VIEWER --> PG
+  EVAL --> ENGRAM
+```
+
+### Detail (ASCII)
+
 ```
  CHANNELS                AGENT RUNTIME (nanoclaw)            MEMORY (the hero, MCP)
  ┌──────────┐  webhook   ┌───────────────────────┐          ┌────────────────────────┐

@@ -16,18 +16,34 @@ async function post<T>(path: string): Promise<T> {
   return body as T;
 }
 
+async function postJson<T>(path: string, payload: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { ...auth(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(body?.error || `${path} → ${res.status}`);
+  return body as T;
+}
+
 export interface GraphNode { id: string; name: string; type: string; val: number }
 export interface GraphLink { source: string; target: string; relation: string; weight: number; invalidated: boolean }
 export interface Stats { activeEpisodes: number; notes: number; entities: number; edges: number; forgotten: number }
+export interface SleepTraceEntry { at: string; step: string; msg: string }
 export interface SleepCycle {
   id: string; startedAt: string; finishedAt: string | null; status: string;
   stats: Record<string, number | Record<string, number>>;
+  checkpoint?: { lastStep?: string; at?: string; trace?: SleepTraceEntry[] };
 }
 export interface Note { id: string; title: string; body: string; kind?: string; importance: number; supersededBy: string | null; createdAt: string }
 export interface Episode { id: string; content: string; sourceChannel: string; importance: number; status: string; createdAt: string }
 export interface PackCandidate { kind: string; id: string; content: string; tokens: number; relevance: number; recency: number; importance: number; diversity: number; score: number; included: boolean }
 export interface SearchResult { memories: Array<{ kind: string; id: string; content: string }>; trace: { tokenBudget: number; tokensUsed: number; weights: Record<string, number>; candidates: PackCandidate[] } }
 export interface CoreBlock { label: string; body: string; sizeLimit: number; pinned: boolean; readOnly: boolean }
+export interface AnswerResult { withMemory: string; withoutMemory: string; recalled: string[] }
+export interface EvalGate { name: string; value: string; pass: boolean; enforced: boolean }
+export interface EvalReport { mode: string; generatedAt: string; gates: EvalGate[]; runs?: number; passRate?: number; sleep?: Record<string, number | Record<string, number>> }
 
 export const api = {
   tenants: () => get<{ tenants: string[] }>(`/tenants`),
@@ -41,6 +57,11 @@ export const api = {
     get<SearchResult>(`/${encodeURIComponent(t)}/search?q=${encodeURIComponent(q)}&budget=${budget}`),
   sleep: (t: string) =>
     post<{ report: SleepCycle; before: Stats; after: Stats }>(`/${encodeURIComponent(t)}/sleep`),
+  teach: (t: string, content: string) =>
+    postJson<{ id: string; content: string }>(`/${encodeURIComponent(t)}/teach`, { content }),
+  answer: (t: string, q: string) =>
+    get<AnswerResult>(`/${encodeURIComponent(t)}/answer?q=${encodeURIComponent(q)}`),
+  evals: (t: string) => get<EvalReport>(`/${encodeURIComponent(t)}/evals`),
   uploadDoc: async (t: string, file: File) => {
     const res = await fetch(`/api/${encodeURIComponent(t)}/upload`, {
       method: 'POST',

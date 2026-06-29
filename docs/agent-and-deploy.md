@@ -27,8 +27,8 @@ proxy** so the agent reads `DASHSCOPE_API_KEY` from `.env` (cloud: from KMS).
 4. ensures `DASHSCOPE_API_KEY` is wired for the container (native proxy)
 5. prints the guided steps below and offers to start the host
 
-The guided steps (need human input / are Claude-driven skills in nanoclaw):
-- **Install a channel:** in Claude, run `/add-telegram` (paste a bot token from @BotFather)
+The guided steps (need human input / are agent-driven skills in nanoclaw):
+- **Install a channel:** in the nanoclaw agent, run `/add-telegram` (paste a bot token from @BotFather)
   and/or `/add-whatsapp` (scan the QR). These fetch nanoclaw's adapter code + build.
 - **Create the agent + wire it:** `/init-first-agent` (picks the channel, creates the agent
   group, wires the DM). Then set the engine: `ncl groups config update --id <group> --provider qwen --model qwen-max`.

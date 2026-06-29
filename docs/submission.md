@@ -10,7 +10,7 @@ new connections. The agent is the vehicle; the self-managing memory is the hero.
 
 ## What it does
 - **Omnichannel personal agent** (Telegram + WhatsApp) reasoning on Qwen via Model Studio,
-  built on the NanoClaw runtime with the engine swapped from Claude to Qwen Code.
+  built on the NanoClaw runtime, running Qwen Code as the engine.
 - **Cloud memory layer, exposed as an MCP server** (memory.write / memory.search / memory.forget).
   The agent is the MCP client. Memory is cleanly separable and independently tested.
 - **Sleep phase (the hero):** offline, per-user — clusters recent episodes, consolidates them

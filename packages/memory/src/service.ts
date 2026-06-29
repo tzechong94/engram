@@ -242,6 +242,12 @@ export class MemoryService {
     for (const r of await this.repo.keywordSearchEpisodes(tenantId, query, k)) {
       add('episode', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
     }
+    // Keyword recall over notes too — finds specific tokens (numbers, days, names)
+    // that live in a consolidated note (the source episode is archived) and that
+    // semantic similarity alone can miss.
+    for (const r of await this.repo.keywordSearchNotes(tenantId, query, k)) {
+      add('note', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
+    }
 
     // Multi-hop graph recall via Personalized PageRank (M1): seed PPR from the
     // query's entities, spread across the knowledge graph, aggregate node mass

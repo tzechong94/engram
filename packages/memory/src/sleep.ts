@@ -3,6 +3,7 @@ import {
   type QwenClient,
   type Blob,
   type SleepCycleStats,
+  type SleepTraceEntry,
   type Episode,
   type SemanticNote,
   createLogger,
@@ -43,6 +44,10 @@ export class SleepPhase {
   private clusterThreshold: number;
   private maxReconcilePairs: number;
   private maxSynthesisPairs: number;
+  /** Per-run narration trace + the step currently executing — captured so the
+   *  viewer can replay what the LLM did. Reset at the top of each run(). */
+  private trace: SleepTraceEntry[] = [];
+  private step: string = 'init';
 
   constructor(
     private store: Store,
@@ -60,6 +65,7 @@ export class SleepPhase {
   /** Verbose "dreaming" narration — one info line per meaningful step so you can
    *  watch the REM cycle think. Always on (the cycle is rare + worth seeing). */
   private dream(msg: string, ctx?: Record<string, unknown>): void {
+    this.trace.push({ at: new Date().toISOString(), step: this.step, msg });
     log.info(`💤 ${msg}`, ctx);
   }
 
@@ -70,17 +76,21 @@ export class SleepPhase {
     const stats = emptyStats();
     const budget = { tokens: 0 };
     let status = 'completed';
+    this.trace = [];
+    this.step = 'enter';
     this.dream(`entering REM cycle for tenant ${tenantId}`, { activeEpisodes: before.activeEpisodes, notes: before.notes, entities: before.entities });
 
     try {
       // 1. FORGET SWEEP first — prune stale, low-value episodes before consolidation
       //    so junk never pollutes the durable notes (prune, then consolidate).
+      this.step = 'forget';
       this.dream('① forgetting — decaying stale, low-value memories…');
       stats.forgotten = await this.forgetSweep(tenantId);
       this.dream(`   forgot ${stats.forgotten} stale memories`);
       await this.checkpoint(cycleId, 'forget', stats);
 
       // 2. CLUSTER the survivors
+      this.step = 'cluster';
       const episodes = await this.repo.recentActiveEpisodes(tenantId, 500);
       stats.episodesScanned = episodes.length;
       const clusters = clusterByEmbedding(episodes, this.clusterThreshold);
@@ -89,6 +99,7 @@ export class SleepPhase {
       await this.checkpoint(cycleId, 'cluster', stats);
 
       // 2. CONSOLIDATE (+ collect notes for later steps)
+      this.step = 'consolidate';
       this.dream('③ consolidating — turning clustered episodes into durable semantic notes…');
       const newNotes: Array<{ id: string; title: string; body: string; embedding: number[] | null }> = [];
       for (const cluster of clusters) {
@@ -108,6 +119,7 @@ export class SleepPhase {
 
       // 3. GRAPH MERGE
       if (status !== 'partial') {
+        this.step = 'graph';
         this.dream('④ graph-merge — extracting entities + relationships into the knowledge graph…');
         for (const note of newNotes) {
           if (this.overBudget(budget, stats)) {
@@ -124,6 +136,7 @@ export class SleepPhase {
 
       // 5. RECONCILE CONTRADICTIONS
       if (status !== 'partial') {
+        this.step = 'reconcile';
         this.dream('⑤ reconciling — checking notes for contradictions to resolve…');
         stats.contradictionsResolved = await this.reconcile(tenantId, budget, stats);
         this.dream(`   resolved ${stats.contradictionsResolved} contradictions (invalidated the stale side)`);
@@ -132,6 +145,7 @@ export class SleepPhase {
 
       // 6. SYNTHESIZE NEW CONNECTIONS
       if (status !== 'partial') {
+        this.step = 'synthesize';
         this.dream('⑥ synthesizing — looking for new connections across notes…');
         stats.connectionsSynthesized = await this.synthesize(tenantId, budget, stats);
         this.dream(`   synthesized ${stats.connectionsSynthesized} new connections`);
@@ -141,6 +155,7 @@ export class SleepPhase {
       // 7. CORE PROFILE — maintain the bounded human-readable per-tenant profile
       //    (the "learned context" the agent reads first). Cheap, always attempted.
       if (!this.overBudget(budget, stats)) {
+        this.step = 'profile';
         this.dream('⑦ profile — rewriting the learned per-tenant profile…');
         await this.maintainCoreProfile(tenantId, budget);
         await this.checkpoint(cycleId, 'profile', stats);
@@ -155,9 +170,11 @@ export class SleepPhase {
     // Mem0-style op accounting: consolidations + syntheses are ADDs; reconcile
     // deletes/noops were tallied during that step.
     stats.memoryOps.add = stats.consolidated + stats.connectionsSynthesized;
-    await this.repo.finishSleepCycle(cycleId, status, stats);
     const after = (await this.repo.memoryStats(tenantId)) as { activeEpisodes: number; notes: number; entities: number };
+    this.step = 'wake';
     this.dream(`woke up (${status}) — episodes ${before.activeEpisodes}→${after.activeEpisodes}, notes ${before.notes}→${after.notes}, entities ${before.entities}→${after.entities}; spent ${stats.tokensUsed} tokens (${stats.costCents.toFixed(3)}¢)`);
+    // Persist final state + the full narration trace so the viewer can replay the cycle.
+    await this.repo.finishSleepCycle(cycleId, status, stats, { lastStep: this.step, at: new Date().toISOString(), trace: this.trace });
     return { cycleId, status, stats, before, after };
   }
 
@@ -171,7 +188,7 @@ export class SleepPhase {
     const bullets = cluster.map((e) => `- ${e.content}`).join('\n');
     const res = await this.qwen.chat(
       [
-        { role: 'system', content: 'You consolidate raw episodic memories into one durable semantic note about the user. Reply with strict JSON: {"title": string, "body": string, "confidence": number 0..1, "importance": integer 1..10}. The body should be a concise, general fact or preference, not a transcript. Importance = how central this is to understanding the user (10 = defining trait/relationship, 1 = trivia).' },
+        { role: 'system', content: 'You consolidate raw episodic memories into one durable semantic note about the user. Reply with strict JSON: {"title": string, "body": string, "confidence": number 0..1, "importance": integer 1..10}. PRESERVE every concrete detail verbatim — names, numbers, phone numbers, dates, times, days, places, amounts. NEVER generalise a specific value away: keep "555-9876", "Thursday", "8pm", "San Francisco" exactly. If the memories update or contradict each other, treat the MOST RECENT as the current truth and state it as the present fact (you may add what it replaced). The body is a concise durable fact or preference, not a transcript. Importance = how central this is to understanding the user (10 = defining trait/relationship, 1 = trivia).' },
         { role: 'user', content: `Consolidate these related memories into one semantic note:\n${bullets}` },
       ],
       { tier: 'max', json: true },
@@ -363,7 +380,7 @@ export class SleepPhase {
   }
 
   private async checkpoint(cycleId: string, step: Step, stats: SleepCycleStats): Promise<void> {
-    await this.repo.saveCheckpoint(cycleId, { lastStep: step, at: new Date().toISOString() }, stats);
+    await this.repo.saveCheckpoint(cycleId, { lastStep: step, at: new Date().toISOString(), trace: this.trace }, stats);
   }
 }
 

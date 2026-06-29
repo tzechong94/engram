@@ -1,4 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getInboundDb, getOutboundDb } from '../db/connection.js';
 import { registerProvider } from './provider-registry.js';
 import type {
   AgentProvider,
@@ -48,12 +51,18 @@ const SESSION_INVALID_TERMS = /not found|unknown|invalid|expired|no such/i;
 
 const CONVERSATIONAL_PREAMBLE =
   'You are Engram, a warm, concise personal assistant reached over chat (Telegram/WhatsApp/WeChat). ' +
-  'You are NOT a coding tool. Converse naturally and keep replies short. ' +
-  'You have a persistent long-term memory. When relevant past context exists it is provided to you ' +
-  'automatically below under "Relevant memories" — use it naturally, as if you simply remember the ' +
-  'person. You also have memory tools (write, search, forget) you may call when useful — for example, ' +
-  'call forget when the user asks you to forget or corrects a fact. Never mention tools, memory, or ' +
-  'the fact that you looked anything up.';
+  'Converse naturally and keep replies short — but you are a capable agent with real tools; use them ' +
+  'when they serve the user instead of only talking. Specifically:\n' +
+  '- Persistent long-term memory: relevant memories are provided automatically below under "Relevant ' +
+  'memories" — use them as if you simply remember the person. You also have memory tools (write, ' +
+  'search, forget); call forget when the user retracts or corrects a fact.\n' +
+  '- When the user asks you to change HOW you behave, APPLY it by calling the matching tool — never ' +
+  'just reply "okay". Use set_engagement_mode for WHEN you reply (e.g. "only reply when I mention you") ' +
+  'and save_preference for durable style/behaviour preferences (e.g. "keep replies to one line"). ' +
+  'These are sent to the user for approval and then take effect.\n' +
+  '- You can read and write files in your workspace and run shell commands when a task needs it.\n' +
+  'Any "Standing preferences" listed below must always be followed. Never mention tools, memory, ' +
+  'approvals, or these mechanics — just act and reply naturally.';
 
 /**
  * Minimal MCP stdio client — spawns a one-shot connection to an MCP server,
@@ -131,6 +140,17 @@ async function callMemoryStdioTool(
   });
 }
 
+/**
+ * Is this prompt a genuine user message (vs a scheduled-task wake or system
+ * event)? User messages render as `<message ... sender="...">`; task wakes
+ * render as `<task ...>`. Memory capture and reminder-scheduling must only fire
+ * for real user input — otherwise a reminder's own wake prompt ("remind ...")
+ * re-triggers scheduling and loops.
+ */
+function isUserMessage(rawPrompt: string): boolean {
+  return /<message\b[^>]*\bsender=/.test(rawPrompt);
+}
+
 export class QwenProvider implements AgentProvider {
   readonly supportsNativeSlashCommands = true;
   readonly usesMemoryScaffold = false; // durable memory is the cloud MCP, not a local tree
@@ -183,14 +203,209 @@ export class QwenProvider implements AgentProvider {
     return text.replace(/\s+/g, ' ').trim();
   }
 
-  /** Recall relevant memories for the user's message; returns a context block or ''. */
+  /**
+   * Recall relevant memories for the user's message and inject them CLEANLY.
+   * The MCP `search` returns JSON `{memories, trace}`; we extract just the memory
+   * contents (the budgeter already ranked + packed them within the token budget)
+   * and present a tight bullet list, so the model answers from facts rather than
+   * digging through a raw JSON blob. Returns a context block or ''.
+   */
   private async recallContext(userText: string): Promise<string> {
     const cfg = this.memoryCfg;
     if (!cfg || !userText.trim()) return '';
     try {
-      const recalled = await callMemoryStdioTool(cfg, 'search', { query: userText });
-      if (!recalled) return '';
-      return `Relevant memories about the user (use naturally; do not say you looked them up):\n${recalled}`;
+      const raw = await callMemoryStdioTool(cfg, 'search', { query: userText, token_budget: 1500 });
+      if (!raw) return '';
+      let memories: Array<{ kind?: string; content?: string }> | null = null;
+      try {
+        memories = (JSON.parse(raw) as { memories?: Array<{ kind?: string; content?: string }> }).memories ?? [];
+      } catch {
+        // Older/raw server output — fall back to injecting the text as-is.
+        return `Relevant memories about the user (use them to answer accurately; never say you looked them up):\n${raw}`;
+      }
+      const lines = memories
+        .map((m) => (m.content ?? '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .map((c) => `- ${c}`);
+      if (!lines.length) return '';
+      return `Relevant memories about the user (use them to answer accurately; never say you looked them up):\n${lines.join('\n')}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Standing preferences the user has approved (set via the save_preference
+   * tool → host writes preferences.md into the agent group folder, mounted at
+   * the cwd). Re-read every turn so a freshly-approved preference takes effect
+   * immediately, with no container restart. Returns a context block or ''.
+   */
+  private prefsBlock(cwd: string): string {
+    try {
+      const body = fs.readFileSync(path.join(cwd, 'preferences.md'), 'utf8').trim();
+      if (!body) return '';
+      return `Standing preferences you must always follow:\n${body}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Expose the MCP tools to the model. Qwen Code (0.18.1) loads MCP servers from
+   * `settings.json` — it does NOT read the `mcpServers` we pass in the ACP
+   * session/new request. Without this, the model has no callable tools and
+   * hallucinates tool use as plain text (so set_engagement_mode etc. never
+   * actually fire). We write a project-scope `.qwen/settings.json` (merged with
+   * any existing one) before launching qwen so its tools reach the model. The
+   * entry shape ({command,args,env}) already matches our mcpServers map.
+   */
+  private writeQwenSettings(cwd: string): void {
+    try {
+      const dir = path.join(cwd, '.qwen');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'settings.json');
+      let existing: Record<string, unknown> = {};
+      try {
+        existing = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+      } catch {
+        /* new file */
+      }
+      // `trust: true` per server bypasses qwen-code's per-call confirmation
+      // prompts, so the tools are live for the model immediately. (Our own
+      // important changes are still gated by the host approval flow — this only
+      // skips qwen-code's redundant prompt.) folderTrust disabled because there
+      // is no TTY in ACP mode to answer the trust dialog.
+      const mcpServers: Record<string, unknown> = {};
+      for (const [name, cfg] of Object.entries(this.mcpServers)) {
+        mcpServers[name] = { ...cfg, trust: true };
+      }
+      const security = { ...((existing.security as Record<string, unknown>) ?? {}), folderTrust: { enabled: false } };
+      fs.writeFileSync(file, JSON.stringify({ ...existing, security, mcpServers }, null, 2));
+
+      // Also pre-trust the workspace in the central trust store, so a fresh
+      // qwen-code start never blocks project config (and its MCP servers) on the
+      // interactive "trust this folder?" dialog.
+      const qwenHome = path.join(process.env.HOME || '/home/node', '.qwen');
+      fs.mkdirSync(qwenHome, { recursive: true });
+      const tfFile = path.join(qwenHome, 'trustedFolders.json');
+      let folders: Record<string, string> = {};
+      try {
+        folders = JSON.parse(fs.readFileSync(tfFile, 'utf8')) as Record<string, string>;
+      } catch {
+        /* new file */
+      }
+      folders[cwd] = 'TRUST_FOLDER';
+      fs.writeFileSync(tfFile, JSON.stringify(folders, null, 2));
+    } catch (e) {
+      console.error(`[qwen] failed to write .qwen/settings.json: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * Reconstruct recent conversation history from the session DBs so the model
+   * has context every turn — independent of ACP session continuity (which is
+   * lost whenever the container respawns: the in-memory daemon is gone and
+   * session/load fails with -32002). This mirrors how the Claude provider
+   * resumes a transcript. User turns = inbound chat messages; assistant turns =
+   * outbound chat messages; system notifications are skipped. Ordered by the
+   * global seq the host/container share.
+   */
+  private recentHistory(currentClean: string, maxTurns = 12): string {
+    const textOf = (content: string): string => {
+      try {
+        const j = JSON.parse(content) as { text?: string; sender?: string };
+        if (j.sender === 'system') return ''; // skip system notifications
+        return String(j.text ?? '').trim();
+      } catch {
+        return '';
+      }
+    };
+    try {
+      const inRows = getInboundDb()
+        .prepare("SELECT seq, content FROM messages_in WHERE seq IS NOT NULL AND kind IN ('chat','chat-sdk') ORDER BY seq DESC LIMIT 40")
+        .all() as Array<{ seq: number; content: string }>;
+      const outRows = getOutboundDb()
+        .prepare("SELECT seq, content FROM messages_out WHERE seq IS NOT NULL AND kind IN ('chat','chat-sdk') ORDER BY seq DESC LIMIT 40")
+        .all() as Array<{ seq: number; content: string }>;
+      const turns = [
+        ...inRows.map((r) => ({ seq: r.seq, role: 'User' as const, text: textOf(r.content) })),
+        ...outRows.map((r) => ({ seq: r.seq, role: 'You' as const, text: textOf(r.content) })),
+      ]
+        .filter((t) => t.text)
+        .sort((a, b) => a.seq - b.seq);
+      // Drop trailing user turn(s) equal to the message we're about to answer
+      // (it's already the prompt) so it isn't duplicated.
+      while (turns.length && turns[turns.length - 1]!.role === 'User' && turns[turns.length - 1]!.text === currentClean) {
+        turns.pop();
+      }
+      const recent = turns.slice(-maxTurns);
+      if (!recent.length) return '';
+      return `Recent conversation (most recent last — use it for context):\n${recent.map((t) => `${t.role}: ${t.text}`).join('\n')}`;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Normalise the model's reply to nanoclaw's delivery contract and route it to
+   * the SOURCE destination. Qwen-max is unreliable with the `<message to="…">`
+   * multi-destination protocol: it replies to the wrong destination (a DM
+   * instead of the group the message came from), sends to several at once, or
+   * emits stray `<internal>`/`<scratchpad>`/`<action>` tags so the poll-loop
+   * sends nothing. We deterministically: (1) pull the human reply text out of
+   * whatever the model produced, (2) drop the thinking/fake-action tags, and
+   * (3) wrap it in a single `<message to="<from>">` targeting the destination the
+   * inbound message came from — exactly nanoclaw's "reply where it came from"
+   * default (see destinations.ts). Falls back to the raw output if it can't
+   * determine a destination or salvage text, so a turn is never silently lost.
+   */
+  private formatReply(rawOutput: string, sourcePrompt: string): string {
+    const raw = (rawOutput ?? '').trim();
+    // Source destination = the `from` of the most recent inbound <message>.
+    const froms = [...sourcePrompt.matchAll(/<message\b[^>]*\bfrom="([^"]+)"/gi)].map((m) => m[1]!);
+    const dest = froms.length ? froms[froms.length - 1] : undefined;
+    if (!dest || dest.startsWith('unknown:')) return raw;
+
+    // Prefer the text the model put inside <message> blocks; else the whole output.
+    const blocks = [...raw.matchAll(/<message\b[^>]*>([\s\S]*?)<\/message>/gi)]
+      .map((m) => (m[1] ?? '').trim())
+      .filter(Boolean);
+    let body = blocks.length ? blocks.join('\n\n') : raw;
+
+    // Strip thinking / fake-action noise and any stray protocol tags.
+    body = body
+      .replace(/<internal>[\s\S]*?<\/internal>/gi, ' ')
+      .replace(/<scratchpad>[\s\S]*?<\/scratchpad>/gi, ' ')
+      .replace(/<action\b[^>]*>[\s\S]*?<\/action>/gi, ' ')
+      .replace(/<\/?(?:internal|scratchpad|action|message|messages)\b[^>]*>/gi, ' ')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/ *\n */g, '\n')
+      .trim();
+
+    if (!body) return raw; // nothing salvageable — don't drop the turn
+    return `<message to="${dest}">${body}</message>`;
+  }
+
+  /**
+   * Explicit "now" anchor. The inbound envelope only carries a timezone, not the
+   * current date/time, so the model can't reliably resolve relative dates
+   * ("tomorrow", "next week"). We compute the current local date/time in the
+   * user's timezone and tell the model to treat it as now.
+   */
+  private nowBlock(rawPrompt: string): string {
+    const tz = rawPrompt.match(/timezone="([^"]+)"/)?.[1] || process.env.TZ || 'UTC';
+    try {
+      const now = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz,
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }).format(new Date());
+      return `Current date and time: ${now} (${tz}). Treat this as "now" — resolve relative dates like "today", "tomorrow", "tonight", "next week" against it.`;
     } catch {
       return '';
     }
@@ -208,18 +423,190 @@ export class QwenProvider implements AgentProvider {
     });
   }
 
+  // ── Deterministic reminders ──────────────────────────────────────────────────
+  // Qwen won't reliably call schedule_task on its own (same proactive-tool-call
+  // gap as memory). So Engram detects reminder intent and schedules it itself:
+  // a cheap regex gate, then a focused JSON extraction, then a real call to the
+  // nanoclaw schedule_task tool — which writes the system action with full
+  // session context (inherited env). Fire-and-forget; never blocks a turn.
+
+  private maybeSchedule(userText: string, rawPrompt: string): void {
+    const cfg = this.mcpServers['nanoclaw'];
+    if (!cfg || !userText.trim()) return;
+    // Cheap gate — only spend an extraction call on plausibly-schedule messages.
+    if (!/\b(remind|reminder|wake me|ping me|don'?t let me forget|schedule|every\s+(day|week|morning|night|mon|tue|wed|thu|fri|sat|sun)|tomorrow|tonight|later|in\s+\d+\s*(s|sec|second|min|minute|hour|hr|h|day)|at\s+\d{1,2}([:.]?\d{2})?\s*(am|pm)?)/i.test(userText)) return;
+    const tz = rawPrompt.match(/timezone="([^"]+)"/)?.[1] || process.env.TZ || 'UTC';
+    void (async () => {
+      try {
+        const spec = await this.extractScheduleJson(userText, tz);
+        if (!spec?.schedule || !spec.processAfter) return;
+        await callMemoryStdioTool(cfg, 'schedule_task', {
+          prompt: spec.prompt || `Remind the user about: ${userText}`,
+          processAfter: spec.processAfter,
+          ...(spec.recurrence ? { recurrence: spec.recurrence } : {}),
+        });
+      } catch {
+        /* best-effort */
+      }
+    })();
+  }
+
+  /** Focused JSON extraction of a reminder spec via Model Studio (qwen-turbo). */
+  private async extractScheduleJson(
+    text: string,
+    tz: string,
+  ): Promise<{ schedule: boolean; prompt: string; processAfter: string; recurrence: string | null } | null> {
+    const key = this.env.DASHSCOPE_API_KEY || this.env.OPENAI_API_KEY;
+    const base = this.env.OPENAI_BASE_URL || this.env.DASHSCOPE_BASE_URL;
+    if (!key || !base) return null;
+    // Current time AS NAIVE LOCAL in the user's timezone, so the model does
+    // simple local arithmetic ("in 1 minute" = localNow + 60s) and returns a
+    // naive-local timestamp, which schedule_task interprets in the same zone.
+    let localNow = new Date().toISOString();
+    try {
+      const p = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }).formatToParts(new Date());
+      const g = (t: string) => p.find((x) => x.type === t)?.value ?? '00';
+      localNow = `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}`;
+    } catch {
+      /* fall back to UTC iso */
+    }
+    const sys =
+      `You convert a chat message into a reminder spec. The user's local time right now is ${localNow} ` +
+      `(timezone ${tz}). Reply with STRICT JSON only: ` +
+      `{"schedule": boolean, "prompt": string, "processAfter": string, "recurrence": string|null}. ` +
+      `Set schedule=true ONLY if the user is asking to be reminded or to schedule/repeat something. ` +
+      `"prompt" = a short instruction telling a future assistant what to remind the user (e.g. "Remind them to check the oven."). ` +
+      `"processAfter" = ISO 8601 NAIVE LOCAL timestamp (no timezone offset) for the first run, computed from the local time above ` +
+      `(e.g. "in 1 minute" → add 60 seconds; "9pm" → today or tomorrow at 21:00). ` +
+      `"recurrence" = a cron expression (in the user's timezone) for repeating reminders, else null.`;
+    try {
+      const res = await fetch(`${base.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: 'qwen-turbo',
+          messages: [{ role: 'system', content: sys }, { role: 'user', content: text }],
+          response_format: { type: 'json_object' },
+          temperature: 0,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = data.choices?.[0]?.message?.content;
+      return content ? JSON.parse(content) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ── Deterministic behaviour changes (engagement mode + preferences) ──────────
+  // Qwen won't reliably make a real MCP tool call through qwen-code's ACP layer
+  // (it narrates "I've changed my settings" as text instead). So — exactly like
+  // memory and reminders — Engram drives it: detect the intent, extract the
+  // structured change via the API, then call the real nanoclaw MCP tool, which
+  // writes the system action → host approval → Telegram card. Reliable.
+
+  private maybeBehaviorChange(userText: string): void {
+    const cfg = this.mcpServers['nanoclaw'];
+    if (!cfg || !userText.trim()) return;
+    // Cheap gate — only spend an extraction call on plausibly behaviour-change messages.
+    if (
+      !/\b(only\s+(reply|respond|answer)|reply\s+only|when\s+(i\s+)?(mention|tag|say|call)|mention\s+me|say\s+your\s+name|call\s+you|your\s+name|don'?t\s+(reply|respond|answer)|always\s+(reply|respond)|stop\s+(replying|responding)|keep\s+(your\s+)?(replies|responses|answers)|be\s+(more\s+)?(concise|brief|short)|one[\s-]?line|in\s+english|no\s+emoji|short(er)?\s+(replies|responses|answers)|from\s+now\s+on)/i.test(
+        userText,
+      )
+    ) {
+      return;
+    }
+    void (async () => {
+      try {
+        const spec = await this.extractBehaviorJson(userText);
+        if (!spec || spec.action === 'none') return;
+        if (spec.action === 'set_engagement_mode' && spec.mode) {
+          await callMemoryStdioTool(cfg, 'set_engagement_mode', {
+            mode: spec.mode,
+            ...(spec.pattern ? { pattern: spec.pattern } : {}),
+            reason: userText.slice(0, 120),
+          });
+        } else if (spec.action === 'save_preference' && spec.preference) {
+          await callMemoryStdioTool(cfg, 'save_preference', { preference: spec.preference });
+        }
+      } catch {
+        /* best-effort — never blocks a chat turn */
+      }
+    })();
+  }
+
+  /** Focused JSON classification of a behaviour-change request via the API. */
+  private async extractBehaviorJson(
+    text: string,
+  ): Promise<{ action: 'set_engagement_mode' | 'save_preference' | 'none'; mode?: string; pattern?: string; preference?: string } | null> {
+    const key = this.env.DASHSCOPE_API_KEY || this.env.OPENAI_API_KEY;
+    const base = this.env.OPENAI_BASE_URL || this.env.DASHSCOPE_BASE_URL;
+    if (!key || !base) return null;
+    const name = this.assistantName || 'Engram';
+    const sys =
+      `You classify whether a chat message asks the assistant (named "${name}", also addressed as "qwenny") to change its OWN behaviour. ` +
+      'Reply STRICT JSON only: ' +
+      '{"action":"set_engagement_mode"|"save_preference"|"none","mode":"always"|"mention"|"mention-sticky"|"pattern"|null,"pattern":string|null,"preference":string|null}. ' +
+      '- "set_engagement_mode" when the user controls WHEN the bot replies: "only reply when I @mention you" → mode "mention"; "always reply" → "always"; ' +
+      '"reply when a message matches X" → "pattern" with the regex in "pattern". ' +
+      `- When the user wants you to respond whenever they say your NAME (with or without @) — e.g. "reply when I say your name", "respond when I call you ${name}" — use mode "pattern" and put a CASE-TOLERANT regex matching your name(s) in "pattern", e.g. "[${name[0]!.toUpperCase()}${name[0]!.toLowerCase()}]${name.slice(1)}|[Qq]wenny". Never use inline flags like (?i). ` +
+      '- "save_preference" when the user states a lasting style/behaviour preference: "keep replies short" / "answer in English" / "no emoji". ' +
+      'Put a clear imperative in "preference" (e.g. "Keep replies to a single line."). ' +
+      '- "none" if it is not a request to change the assistant\'s behaviour.';
+    try {
+      const res = await fetch(`${base.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: 'qwen-max',
+          messages: [
+            { role: 'system', content: sys },
+            { role: 'user', content: text },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const content = data.choices?.[0]?.message?.content;
+      return content ? JSON.parse(content) : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── ACP daemon mode ────────────────────────────────────────────────────────
 
   private queryAcp(input: QueryInput): AgentQuery {
     const queue = new EventQueue();
+    this.writeQwenSettings(input.cwd); // MCP tools reach the model via settings.json, not ACP
     const child = spawn(QWEN_BIN, ['--experimental-acp'], {
       cwd: input.cwd,
       env: this.childEnv(input),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    // Workspace root — file tools are confined to this subtree (the agent's
+    // own /workspace/agent mount), so read/write can't escape into the host.
+    const root = path.resolve(input.cwd);
+    const confined = (p: string): string => {
+      const abs = path.resolve(root, String(p ?? ''));
+      if (abs !== root && !abs.startsWith(root + path.sep)) {
+        throw new Error(`path outside workspace: ${p}`);
+      }
+      return abs;
+    };
+
     const rpc = new JsonRpcPeer(child, {
       // The agent asks permission before tool calls; we auto-allow (the host
       // already gates credentialed actions via OneCLI, and runs bypass mode).
+      // Note: important host-level changes (engagement mode, preferences,
+      // packages) go through approval-gated MCP tools, NOT raw shell — so
+      // auto-allowing the agent's own sandboxed tools mirrors Claude's Bash.
       'session/request_permission': async (params) => {
         const options = (params?.options as Array<{ optionId: string; kind?: string }>) ?? [];
         const allow =
@@ -227,6 +614,26 @@ export class QwenProvider implements AgentProvider {
           options.find((o) => o.kind === 'allow_once') ??
           options[0];
         return { outcome: { outcome: 'selected', optionId: allow?.optionId ?? 'allow' } };
+      },
+      // Client-side filesystem bridge for Qwen Code's read/write/edit tools,
+      // confined to the workspace. Advertised via clientCapabilities.fs below.
+      'fs/read_text_file': async (params) => {
+        const abs = confined(params?.path as string);
+        let text = await fs.promises.readFile(abs, 'utf8');
+        const line = Number(params?.line ?? 0);
+        const limit = Number(params?.limit ?? 0);
+        if (line > 0 || limit > 0) {
+          const lines = text.split('\n');
+          const start = line > 0 ? line - 1 : 0;
+          text = lines.slice(start, limit > 0 ? start + limit : undefined).join('\n');
+        }
+        return { content: text };
+      },
+      'fs/write_text_file': async (params) => {
+        const abs = confined(params?.path as string);
+        await fs.promises.mkdir(path.dirname(abs), { recursive: true });
+        await fs.promises.writeFile(abs, String(params?.content ?? ''), 'utf8');
+        return null;
       },
     });
 
@@ -237,13 +644,18 @@ export class QwenProvider implements AgentProvider {
       child.on('error', (e) => queue.push({ type: 'error', message: `qwen spawn failed: ${e.message}`, retryable: false }));
       child.stderr.on('data', (d) => {
         const s = d.toString().trim();
-        if (s) queue.push({ type: 'activity' });
+        if (s) {
+          // Surface qwen-code's own logs (MCP connection, tool registration,
+          // errors) into the container log for diagnosis.
+          console.error(`[qwen] ${s}`);
+          queue.push({ type: 'activity' });
+        }
       });
 
       try {
         const initRes = (await rpc.request('initialize', {
           protocolVersion: 1,
-          clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+          clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
         })) as { authMethods?: Array<{ id?: string }> };
 
         // ACP requires selecting an auth method before opening a session when
@@ -292,13 +704,25 @@ export class QwenProvider implements AgentProvider {
           queue.beginTurn();
           const clean = this.cleanUserText(text);
           const memory = await this.recallContext(clean);
-          const fullPrompt = [instructions, memory, text].filter(Boolean).join('\n\n');
+          const prefs = this.prefsBlock(input.cwd);
+          const history = this.recentHistory(clean);
+          const now = this.nowBlock(text);
+          console.error(`[qwen] ctx → now:${now ? 'y' : 'n'} prefs:${prefs ? 'y' : 'n'} history:${history.split('\n').length - 1}turns memory:${memory.split('\n').length - 1}items`);
+          const fullPrompt = [instructions, now, prefs, history, memory, text].filter(Boolean).join('\n\n');
           const res = (await rpc.request('session/prompt', {
             sessionId,
             prompt: [{ type: 'text', text: fullPrompt }],
           })) as { stopReason?: string };
-          queue.endTurn(res?.stopReason);
-          this.captureTurn(clean, 'telegram');
+          queue.endTurn(res?.stopReason, this.formatReply(queue.peekTurn(), text));
+          // Only capture/schedule from genuine user messages (rendered as
+          // `<message ... sender="...">`). Scheduled-task wakes render as
+          // `<task ...>` — capturing them would pollute memory and, worse,
+          // re-trigger scheduling (the wake prompt says "remind ..."), looping.
+          if (isUserMessage(text)) {
+            this.captureTurn(clean, 'telegram');
+            this.maybeSchedule(clean, text);
+            this.maybeBehaviorChange(clean);
+          }
         };
 
         await promptOnce(input.prompt);
@@ -341,6 +765,7 @@ export class QwenProvider implements AgentProvider {
 
   private queryOneShot(input: QueryInput): AgentQuery {
     const queue = new EventQueue();
+    this.writeQwenSettings(input.cwd); // MCP tools reach the model via settings.json, not ACP
     let aborted = false;
     let current: ChildProcess | null = null;
     const instructions = [CONVERSATIONAL_PREAMBLE, input.systemContext?.instructions].filter(Boolean).join('\n\n');
@@ -348,7 +773,10 @@ export class QwenProvider implements AgentProvider {
     const runPrompt = async (text: string): Promise<void> => {
       const clean = this.cleanUserText(text);
       const memory = await this.recallContext(clean);
-      const composed = [instructions, memory, text].filter(Boolean).join('\n\n');
+      const prefs = this.prefsBlock(input.cwd);
+      const history = this.recentHistory(clean);
+      const now = this.nowBlock(text);
+      const composed = [instructions, now, prefs, history, memory, text].filter(Boolean).join('\n\n');
       await new Promise<void>((resolve) => {
         const args = ['--yolo', '-p', composed];
         if (this.model) args.push('-m', this.model);
@@ -361,11 +789,15 @@ export class QwenProvider implements AgentProvider {
         });
         proc.on('error', (e) => queue.push({ type: 'error', message: `qwen spawn failed: ${e.message}`, retryable: false }));
         proc.on('close', () => {
-          queue.push({ type: 'result', text: out.trim() || null });
+          queue.push({ type: 'result', text: this.formatReply(out, text) || null });
           resolve();
         });
       });
-      this.captureTurn(clean, 'telegram');
+      if (isUserMessage(text)) {
+        this.captureTurn(clean, 'telegram');
+        this.maybeSchedule(clean, text);
+        this.maybeBehaviorChange(clean);
+      }
     };
 
     const run = async () => {
@@ -445,9 +877,13 @@ class EventQueue {
   beginTurn(): void {
     this.turnText = '';
   }
-  endTurn(stopReason?: string): void {
+  peekTurn(): string {
+    return this.turnText;
+  }
+  endTurn(stopReason?: string, overrideText?: string): void {
     void stopReason;
-    this.push({ type: 'result', text: this.turnText.trim() || null });
+    const t = (overrideText ?? this.turnText).trim();
+    this.push({ type: 'result', text: t || null });
   }
   close(): void {
     this.closed = true;

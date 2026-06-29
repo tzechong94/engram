@@ -88,13 +88,29 @@ export interface SleepCycleStats {
   memoryOps: { add: number; update: number; delete: number; noop: number };
 }
 
+/** One line of the "dreaming" narration — what the LLM did, at which step, when.
+ *  Persisted in the cycle checkpoint so the viewer can replay the cycle step by step. */
+export interface SleepTraceEntry {
+  at: string; // ISO timestamp
+  step: string; // which dream step emitted this line (forget | cluster | …)
+  msg: string; // the human-readable narration line
+}
+
+/** The recoverable checkpoint stored per cycle: last step reached + the full
+ *  narration trace accumulated so far. Loosely typed (jsonb) but shaped here. */
+export interface SleepCheckpoint {
+  lastStep?: string;
+  at?: string;
+  trace?: SleepTraceEntry[];
+}
+
 export interface SleepCycle {
   id: string;
   tenantId: string;
   startedAt: string;
   finishedAt: string | null;
   status: SleepCycleStatus;
-  checkpoint: Record<string, unknown>;
+  checkpoint: SleepCheckpoint & Record<string, unknown>;
   stats: SleepCycleStats;
 }
 

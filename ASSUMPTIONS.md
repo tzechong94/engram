@@ -7,7 +7,7 @@ and proceed. Each is reversible unless noted.
 - **Engine swap = new `qwen` provider in nanoclaw's provider registry**, driving the
   Qwen Code terminal agent in **ACP daemon mode** (`--experimental-acp`) over stdio,
   pointed straight at Model Studio/DashScope. No routing/middle layer (user directive:
-  "like Claude Code"). Provider designed so a one-shot fallback can slot in.
+  a direct coding-agent integration, like Qwen Code itself). Provider designed so a one-shot fallback can slot in.
 - **Memory is a separable package reached over MCP.** `packages/memory` ships one core
   library with two thin entrypoints: an MCP server (stdio — the online path the agent
   calls) and a sleep worker (scheduled — runs the REM cycle by importing the core

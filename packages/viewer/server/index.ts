@@ -169,6 +169,51 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         sleeping = false;
       }
     }
+    case 'teach': {
+      // Interactive playground: teach Engram a fact (writes one episode).
+      if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
+      const buf = await readBody(req, 64 * 1024);
+      let content = '';
+      try {
+        content = String((JSON.parse(buf.toString('utf8') || '{}') as { content?: string }).content || '').trim();
+      } catch {
+        /* bad json */
+      }
+      if (!content) return json(res, { error: 'content required' }, 400);
+      await repo.ensureTenant(tenant); // allow fresh playground tenants
+      const r = await memory.write({ tenantId: tenant, content, sourceChannel: 'viewer' });
+      log.info('viewer teach', { tenant, id: r.id });
+      return json(res, { id: r.id, content });
+    }
+    case 'answer': {
+      // Two-brains: answer the question WITH Engram memory (recall + ground) vs
+      // WITHOUT (a cold model). The headline proof that memory changes the answer.
+      const q = url.searchParams.get('q') || '';
+      if (!q) return json(res, { error: 'q required' }, 400);
+      const recall = await memory.search({ tenantId: tenant, query: q, tokenBudget: 1200 });
+      const memBlock = recall.memories.map((m) => `- ${m.content}`).join('\n');
+      const ask = async (sys: string, user: string): Promise<string> => {
+        const r = await qwen.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { tier: 'max' });
+        return r.text.trim();
+      };
+      const [withMemory, withoutMemory] = await Promise.all([
+        ask(
+          'You are a personal assistant WITH long-term memory of this user. Answer ONLY from the memories provided. If they do not contain the answer, say "I don\'t know." One sentence.',
+          `Memories about the user:\n${memBlock || '(no memories)'}\n\nQuestion: ${q}`,
+        ),
+        ask('You are a personal assistant with NO memory of this user. Answer the question. One sentence.', `Question: ${q}`),
+      ]);
+      return json(res, { withMemory, withoutMemory, recalled: recall.memories.map((m) => m.content) });
+    }
+    case 'evals': {
+      // Proof panel: serve the latest eval gate results (packages/eval/out/evals.json).
+      try {
+        const p = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../eval/out/evals.json');
+        return json(res, JSON.parse(fs.readFileSync(p, 'utf8')));
+      } catch {
+        return json(res, { error: 'no eval results yet — run `pnpm --filter @engram/eval evals`' }, 404);
+      }
+    }
     default:
       return json(res, { error: `unknown resource: ${resource}` }, 404);
   }
