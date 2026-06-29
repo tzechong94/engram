@@ -39,7 +39,7 @@ if command -v docker >/dev/null 2>&1; then
   if [ -n "${ACR_IMAGE:-}" ]; then
     docker tag nanoclaw-agent:latest "$ACR_IMAGE" && docker push "$ACR_IMAGE"
   else
-    echo "  set ACR_IMAGE=registry.<region>.aliyuncs.com/<ns>/engram-agent:<tag> to push"
+    echo "  set ACR_IMAGE=registry.<region>.aliyuncs.com/<ns>/nanoclaw-v2:<tag> to push"
   fi
 else
   echo "  docker not found — build the image where Docker is available"

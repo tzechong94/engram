@@ -262,11 +262,61 @@ sources — in `docs/memory-research-summary.md`.)
 | **Importance + recency + relevance (min-max normalized); reflection trigger** | Budgeter + importance + sleep trigger (§2, §1) | Generative Agents — arXiv [2304.03442](https://arxiv.org/abs/2304.03442) |
 | **Bi-temporal graph + edge invalidation** — contradictions invalidate, not delete | Reconcile + bi-temporal model (§4) | Zep / Graphiti — arXiv [2501.13956](https://arxiv.org/abs/2501.13956) |
 | **ADD / UPDATE / DELETE / NOOP memory ops** — auditable maintenance | Reconcile op-logging (§4) | Mem0 |
-| **Zettelkasten note-linking + evolution** | Deferred (roadmap) | A-MEM — arXiv [2502.12110](https://arxiv.org/abs/2502.12110) |
-| **Long-memory benchmarks** | Deferred (roadmap) | LongMemEval — arXiv [2410.10813](https://arxiv.org/abs/2410.10813); LoCoMo |
 
 The two biggest bets: **sleep-time compute** (the architecture itself) and the pairing of
 **PageRank retrieval** with **bi-temporal contradiction handling** (the highest-leverage upgrades).
 Honest caveats: the Letta efficiency figures are vendor/synthetic (directional, not guaranteed);
 HippoRAG needs a query-time entity-extraction call and is proven mainly on multi-hop QA; the
 Generative-Agents constants are that paper's choices, tuned here for a personal-assistant timescale.
+
+### The ideas, and how Engram implements them
+
+**Sleep-time compute (MemGPT / Letta).** A primary agent handles the live conversation and never
+edits long-term memory; a separate background agent reorganizes raw context into reusable knowledge
+during idle time, so the expensive cognition is amortized across all future queries instead of paid
+on every turn. *In Engram:* the online path (`service.ts`) only captures and recalls; everything
+heavy lives in the offline `SleepPhase.run` (`sleep.ts`). Key steps — (1) the online write is
+deliberately dumb (embed + dedup + heuristic importance, no LLM); (2) sleep is triggered by
+inactivity, a schedule, or accumulated importance; (3) each of its 7 phases checkpoints so a crash
+resumes, and a per-tenant cent cap stops it cleanly.
+
+**Core memory blocks (MemGPT / Letta; Karpathy's "LLM wiki").** A small, always-in-context,
+self-maintained profile gives the agent its durable sense of "who am I talking to" without a search.
+*In Engram:* the `profile` step (`maintainCoreProfile`, qwen-max) rewrites a ≤1200-char block from the
+top-importance notes each sleep; `memory.search` prepends it on every turn (budget-counted). Key
+steps — (1) select the highest-importance current notes; (2) LLM-summarize into a bounded block;
+(3) `upsertCoreBlock`; (4) prepend at recall before the retrieved candidates.
+
+**Personalized PageRank retrieval (HippoRAG / HippoRAG 2).** Instead of one-hop graph expansion,
+seed PageRank from the query's entities and let probability mass spread multi-hop across the
+knowledge graph, then aggregate node mass back onto the notes — associative, multi-hop recall in a
+single retrieval pass. *In Engram:* `ppr.ts:personalizedPageRank` over the per-tenant `entities`/`edges`
+graph. Key steps — (1) extract the query's seed entities; (2) run power iteration
+`r = α·s + (1−α)·Wᵀr` (restart `α = 0.5`, undirected weighted adjacency, ≤50 iters, tol 1e-6);
+(3) map node scores onto the notes that cite them; (4) feed those as a recall source into the same
+rerank + budgeter (1-hop fallback when the graph has <2 edges).
+
+**Importance + recency + relevance scoring; reflection (Generative Agents).** Retrieval ranks by a
+weighted blend of how relevant, how recent, and how important each memory is (each min-max
+normalized), and a "reflection" pass fires when accumulated importance crosses a threshold. *In
+Engram:* the budgeter (`budgeter.ts:packContext`) and the importance heuristic + LLM re-rating. Key
+steps — (1) score `0.5·relevance + 0.2·recency + 0.2·importance + 0.1·diversity`, normalized;
+(2) recency = `0.5^(age / 7 days)`; (3) greedy MMR packing under the token budget (diversity =
+`1 − max similarity to what's already picked`); (4) importance is a cheap heuristic on write, re-rated
+1–10 by the LLM at consolidation; (5) sleep can fire on accumulated importance, not just a clock.
+
+**Bi-temporal knowledge graph + edge invalidation (Zep / Graphiti).** Every fact carries *valid
+time* (true in the world) and *transaction time* (recorded); new contradictory info **invalidates**
+the old fact instead of deleting it, preserving history and enabling "what did I believe at time T."
+*In Engram:* the bi-temporal columns on notes/edges plus the centralized validity filter (`repo.ts`).
+Key steps — (1) the sleep `reconcile` step finds high-similarity note pairs and asks the LLM if they
+contradict; (2) on a contradiction, `supersedeNote` sets `superseded_by` + `invalidated_at` +
+`valid_to = now()`; (3) every read applies `noteValidSql()` so stale memory never leaks;
+(4) `notesAsOf(t)` reconstructs the past state.
+
+**ADD / UPDATE / DELETE / NOOP memory ops (Mem0).** Frame memory maintenance as explicit, logged
+operations rather than opaque rewrites, so every change is auditable. *In Engram:* the reconcile and
+consolidate steps emit op counts recorded in `sleep_cycles.stats` (a supersede is a delete; a new
+consolidated note is an add), surfaced in the viewer's dream trace. Key steps — (1) compare candidate
+facts against existing similar notes; (2) decide add / update / delete / no-op; (3) log the counts on
+the cycle for observability.
