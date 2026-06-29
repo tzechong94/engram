@@ -79,5 +79,45 @@ EventBridge (sleep schedule). See `deploy/alibaba/`.
 
 ## Architecture
 
-`ARCHITECTURE.md` — diagram, the two memory paths, data model, security, multi-tenancy.
-Test plan + eval gates: `TESTING.md`.
+```mermaid
+flowchart TB
+  User["👤 User · Telegram / WhatsApp / WeChat"]
+
+  subgraph AGENT["Agent runtime · NanoClaw (vendored framework) — engine = Qwen Code"]
+    ADAPT["Channel adapters"] --> ROUTER["Router · per-user session"] --> RUNNER["Agent-runner · Qwen provider (ACP)"]
+  end
+
+  QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen3-coder · embeddings · rerank"]
+
+  subgraph ENGRAM["⭐ Engram memory layer · MCP server — THE HERO (100% Qwen)"]
+    direction TB
+    ONLINE["Online path (hot): write · search · forget"]
+    RECALL["Hybrid recall: vector + keyword + graph-PPR<br/>→ rerank → token budgeter → packed context + trace"]
+    SLEEP["💤 Sleep / REM cycle (offline):<br/>forget → cluster → consolidate → graph-merge<br/>→ reconcile (bi-temporal) → synthesize → profile"]
+    ONLINE --> RECALL
+  end
+
+  subgraph STORE["Storage · local ↔ Alibaba Cloud (config swap)"]
+    PG[("Postgres + pgvector<br/>episodes · notes · entities · edges · profile")]
+    REDIS[("Redis / Tair · queue")]
+    BLOB[("Blob / OSS · encrypted cold archive")]
+  end
+
+  VIEWER["🧠 Viewer · graph · dream trace · two-brains · proof"]
+  EVAL["✅ Eval · 10-gate suite · 3× real Qwen"]
+
+  User <--> ADAPT
+  RUNNER <-->|reason| QWEN
+  RUNNER -->|"MCP · write / search / forget"| ONLINE
+  ONLINE <--> PG
+  RECALL -. embed + rerank .-> QWEN
+  SLEEP <--> PG
+  SLEEP -. consolidate + reconcile .-> QWEN
+  ONLINE -.-> BLOB
+  ONLINE --> REDIS
+  VIEWER --> PG
+  EVAL --> ENGRAM
+```
+
+Full detail — the two memory paths, data model, security, multi-tenancy — in
+`ARCHITECTURE.md`. Test plan + eval gates in `TESTING.md`.
