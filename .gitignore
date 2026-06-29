@@ -31,3 +31,6 @@ nanoclaw-v2/repo-tokens/
 *.swp
 .idea/
 .vscode/
+
+# local submission prep (not part of the repo)
+submission/

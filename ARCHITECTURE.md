@@ -3,8 +3,8 @@
 Engram is a cloud-hosted personal agent reached over Telegram / WhatsApp / WeChat,
 reasoning on Qwen, built around a **self-managing cloud memory layer** whose **sleep
 phase** consolidates, forgets, reconciles, and connects memories during downtime. The
-agent is the vehicle; the memory layer is the hero, and it is a separable MCP service
-that Desk (Track 4) reuses.
+agent is the vehicle; the memory layer is the hero — a separable MCP service, so it drops
+into any agent.
 
 ## System diagram
 
@@ -113,11 +113,16 @@ inactivity or a nightly schedule (whichever first), or forced for a demo. Steps:
   normalized budgeter; sleep fires on accumulated importance, not just inactivity/cron.
 
 ## Memory viewer (brain UI)
-`packages/viewer` — a read-only, tenant-scoped JSON API (over `MemoryRepo` read methods,
-no writes) + a React/Vite neural-graph UI, one container, one port (`make viewer` /
-`make viewer-docker`, browser at :8080). Entities = neurons, edges = synapses (invalidated
-ones grey out), recall lights up activated neurons + shows the packing trace, sleep cycles
-show before→after consolidation.
+`packages/viewer` — a tenant-scoped JSON API over `MemoryRepo` + `MemoryService` and a
+React/Vite neural-graph UI on one port (`http://localhost:8080`). Entities = neurons,
+edges = synapses (invalidated ones grey out); recall lights up activated neurons and shows
+the budgeter's per-candidate packing trace; sleep cycles show before→after consolidation
+with a step-by-step dream trace. For the demo it adds:
+- **▶ Demo Mode** — a self-running arc: teach → ask → dream → update a fact → dream → ask
+  again (answers the new value, old gone).
+- **Ask both brains** — the same question answered *with* Engram memory vs a no-memory model.
+- **Teach Engram** — type a fact and watch it get remembered.
+- **Proof panel** — the eval gate results (3× real Qwen) live in the UI.
 
 ## Data model
 See `packages/memory/src/db/migrations/`. Tables: `tenants`, `episodes`,

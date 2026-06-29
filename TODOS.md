@@ -1,56 +1,37 @@
-# Engram TODOs
+# Engram — Roadmap / deferred work
 
-Deferred from the Memory v2 CEO/Eng reviews (scope: "Hero bundle"). Each has enough
-context to pick up cold.
+Genuine future work, scoped out of the current build. Each has enough context to pick up cold.
 
-## M6 — A-MEM Zettelkasten note-linking + evolution  (P2)
-**What:** When a semantic note is created, dynamically link it to similar existing notes
-(note↔note edges) and let adding a note update the linked notes ("memory evolution"),
-forming a self-revising knowledge network — emergent synthesis between scheduled cycles.
-**Why:** complements the scheduled `synthesize` step; surfaces connections continuously.
-**Where to start:** add a `note_links(tenant_id, src_note, dst_note, weight)` table; on
-`insertNote`, vector-search top-k similar notes and link; a sleep step can co-update linked
-note bodies. Source: A-MEM (arXiv 2502.12110). Effort: M (CC).
+## M6 — A-MEM Zettelkasten note-linking + evolution (P2)
+When a semantic note is created, link it to similar existing notes (note↔note edges) and let
+new notes update the linked ones ("memory evolution") — a self-revising knowledge network,
+emergent synthesis between scheduled sleep cycles. Start: a `note_links(tenant_id, src, dst,
+weight)` table; on `insertNote`, vector-search top-k similar notes and link; a sleep step
+co-updates linked bodies. Source: A-MEM (arXiv 2502.12110).
 
-## M7 — LoCoMo / LongMemEval benchmark harness  (P2)
-**What:** Add standard multi-session conversational-memory QA scenarios to `packages/eval`
-as an external yardstick alongside the synthetic scenario.
-**Why:** credible external numbers for the memory moat (judges/readers).
-**Where to start:** adapt a LoCoMo/LongMemEval sample into the eval's seed+query format;
-score recall/temporal/contradiction. Sources: arXiv 2410.10813 (LongMemEval), LoCoMo.
-Effort: M-L (CC) — the datasets need adapters.
+## M7 — LoCoMo / LongMemEval benchmark harness (P2)
+Add standard multi-session conversational-memory QA to `packages/eval` as an external
+yardstick alongside the synthetic scenario, for credible third-party numbers. Start: adapt a
+LoCoMo / LongMemEval sample into the eval's seed+query format; score recall/temporal/
+contradiction. Sources: arXiv 2410.10813 (LongMemEval), LoCoMo.
 
-## Memory MCP secret hygiene  (P2)
-`scripts/install-engram-memory.sh` writes DASHSCOPE_API_KEY + ENGRAM_ENCRYPTION_KEY into
-the nanoclaw `container_configs` DB + materialized `container.json` (plaintext at rest).
-Fine for the native-proxy single-operator model (`groups/` is gitignored), but it's secret
-sprawl. Harden: have the memory MCP subprocess **inherit** these from the container env that
-the native credential proxy already injects, instead of duplicating them in the MCP `env`.
-Verify nanoclaw's stdio MCP child inherits container process env first. Effort: S.
+## Memory MCP secret hygiene (P2)
+The memory MCP subprocess currently gets `DASHSCOPE_API_KEY` / `ENGRAM_ENCRYPTION_KEY` in its
+`container.json` env. Have it **inherit** these from the container env the credential proxy
+already injects, instead of duplicating them. Verify nanoclaw's stdio MCP child inherits the
+container process env first.
 
-## Installer JSON escaping  (P3)
-The same script interpolates env values into a JSON string unescaped — a value containing
-`"` or `\` (e.g. a DB password) breaks the JSON. Build the `--env` JSON with `jq`/node
-instead of string interpolation. Effort: S.
+## Viewer runtime image slimming (P3)
+The viewer Docker runtime copies the built workspace and runs via `tsx`. Compile
+`server/index.ts` to JS, copy only `dist-server` + `dist-web` + runtime deps, run with
+`node` — smaller image, faster cold start.
 
-## Viewer runtime image slimming  (P3)
-**What:** the viewer Docker runtime currently copies the built workspace + runs via `tsx`.
-**Why:** smaller, faster cold start.
-**Where to start:** compile `server/index.ts` to JS (tsc), copy only `dist-server` +
-`dist-web` + the runtime deps of `@engram/memory`/`@engram/shared`, run with `node`.
-Effort: S.
+## Scale-out: memory over HTTP (P3)
+Today the memory MCP server runs stdio in-container. For higher concurrency, run one
+long-lived HTTP memory service with per-tenant tokens + pooled DB connections. Same MCP
+protocol, same core, same schema — a transport/config swap, not a rewrite.
 
-## Repo finalization (git) — DONE + caveat
-`git init` at engram root + nanoclaw-v2 vendored (its `.git` moved to
-`~/.engram-nanoclaw-upstream-git.bak`, not deleted). Remote: git@github.com:tzechong94/engram.git.
-Initial commit made; **not pushed** (`git push -u origin main` when ready).
-**Caveat:** vendoring removed nanoclaw's `origin`, so the `/add-telegram` /add-whatsapp`
-skills (which `git fetch origin <channels-branch>`) need the upstream re-added first:
-`git remote add nanoclaw https://github.com/nanocoai/nanoclaw.git && git fetch nanoclaw`
-(or run the channel install before vendoring on a fresh nanoclaw clone). The adapter code,
-once installed, is committed normally.
-
-## Live-gated (need credentials/binary, not code)
-- Real Qwen: set `DASHSCOPE_API_KEY` + `QWEN_MOCK=false`.
-- Qwen Code ACP live validation: `nanoclaw-v2/docs/qwen-engine.md`.
-- Telegram round-trip; live Alibaba deploy proof.
+## Needs credentials, not code
+- Real Qwen: `DASHSCOPE_API_KEY` + `QWEN_MOCK=false`.
+- Telegram bot token / WhatsApp QR for the live agent.
+- Live Alibaba deploy proof (see `deploy/alibaba/`).
