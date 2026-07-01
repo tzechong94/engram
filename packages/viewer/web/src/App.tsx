@@ -763,7 +763,13 @@ export function App() {
               linkDirectionalParticles={(l: any) => (l.invalidated ? 0 : 1)}
               linkDirectionalParticleWidth={1.6}
               onNodeClick={(n: any) => { setQuery(n.name); }}
+              minZoom={0.4}
+              maxZoom={6}
             />
+          )}
+          {graph.nodes.length > 0 && (
+            <button className="recenter" title="Recenter / fit the graph to view"
+              onClick={() => fgRef.current?.zoomToFit(400, 80)}>⤢ fit</button>
           )}
           <div className="legend">
             <span><i style={{ background: '#5eead4' }} /> entity</span>
