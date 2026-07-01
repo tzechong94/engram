@@ -3,7 +3,7 @@
 Engram is a cloud-hosted personal agent reached over Telegram / WhatsApp / WeChat,
 reasoning on Qwen, built around a **self-managing cloud memory layer** whose **sleep
 phase** consolidates, forgets, reconciles, and connects memories during downtime. The
-agent is the vehicle; the memory layer is the hero — a separable MCP service, so it drops
+agent is the vehicle; the memory layer is the hero, a separable MCP service, so it drops
 into any agent.
 
 ## System diagram
@@ -14,13 +14,13 @@ into any agent.
 flowchart TB
   User["👤 User · Telegram / WhatsApp / WeChat"]
 
-  subgraph AGENT["Agent runtime · NanoClaw (vendored framework) — engine = Qwen Code"]
+  subgraph AGENT["Agent runtime · NanoClaw (vendored framework), engine = Qwen Code"]
     ADAPT["Channel adapters"] --> ROUTER["Router · per-user session"] --> RUNNER["Agent-runner · Qwen provider (ACP)"]
   end
 
   QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen3-coder · embeddings · rerank"]
 
-  subgraph ENGRAM["⭐ Engram memory layer · MCP server — THE JUDGED CONTRIBUTION (100% Qwen)"]
+  subgraph ENGRAM["⭐ Engram memory layer · MCP server, THE JUDGED CONTRIBUTION (100% Qwen)"]
     direction TB
     ONLINE["Online path (hot): write · search · forget"]
     RECALL["Hybrid recall: vector + keyword + graph-PPR<br/>→ rerank → token budgeter → packed context + trace"]
@@ -63,7 +63,7 @@ flowchart TB
                                      │ tenant_id env                    │ core lib (direct)
                                      ▼                                  ▼
                           ┌─────────────────────────────────────────────────────────┐
-                          │ packages/shared — infra interfaces                       │
+                          │ packages/shared,  infra interfaces                       │
                           │ Store · Vector · Blob · Queue · Scheduler · Secrets       │
                           │ QwenClient (DashScope, behind interface + offline mock)   │
                           └───────────────┬─────────────────────────────────────────┘
@@ -83,14 +83,14 @@ flowchart TB
 
 ## The two memory paths
 
-**Online (real-time, fast & cheap)** — `memory.write` does lightweight episodic capture
+**Online (real-time, fast & cheap)**: `memory.write` does lightweight episodic capture
 plus embedding with content-hash dedup; `memory.search` runs hybrid recall (vector ANN +
 keyword + one hop of graph), reranks, then the **context budgeter** packs candidates under
 a token budget scoring `w1·relevance + w2·recency_decay + w3·importance + w4·diversity`
 and returns the packing trace. `memory.forget` is explicit. All heavy cognition is
 deferred to the sleep phase.
 
-**Sleep phase / REM cycle (offline, during downtime)** — per-user, triggered by
+**Sleep phase / REM cycle (offline, during downtime)**: per-user, triggered by
 inactivity or a nightly schedule (whichever first), or forced for a demo. Steps:
 1. cluster recent active episodes (embedding cosine-kNN)
 2. consolidate each cluster into a durable semantic note (Qwen-Max)
@@ -100,7 +100,7 @@ inactivity or a nightly schedule (whichever first), or forced for a demo. Steps:
 6. cross-cluster synthesis (surface new connections that didn't exist before)
 7. checkpoint after each step; enforce per-tenant cost cap; emit an observable report.
 
-## Memory v2 (research-backed — `docs/memory-research-summary.md`)
+## Memory v2 (research-backed: `docs/memory-research-summary.md`)
 - **Multi-hop retrieval:** Personalized PageRank over the entity graph (HippoRAG) is a
   recall source feeding rerank + budgeter, seeded by query entities (no online LLM call);
   1-hop fallback for tiny graphs.
@@ -113,16 +113,16 @@ inactivity or a nightly schedule (whichever first), or forced for a demo. Steps:
   normalized budgeter; sleep fires on accumulated importance, not just inactivity/cron.
 
 ## Memory viewer (brain UI)
-`packages/viewer` — a tenant-scoped JSON API over `MemoryRepo` + `MemoryService` and a
+`packages/viewer`: a tenant-scoped JSON API over `MemoryRepo` + `MemoryService` and a
 React/Vite neural-graph UI on one port (`http://localhost:8080`). Entities = neurons,
 edges = synapses (invalidated ones grey out); recall lights up activated neurons and shows
 the budgeter's per-candidate packing trace; sleep cycles show before→after consolidation
 with a step-by-step dream trace. For the demo it adds:
-- **▶ Demo Mode** — a self-running arc: teach → ask → dream → update a fact → dream → ask
+- **▶ Demo Mode**: a self-running arc: teach → ask → dream → update a fact → dream → ask
   again (answers the new value, old gone).
-- **Ask both brains** — the same question answered *with* Engram memory vs a no-memory model.
-- **Teach Engram** — type a fact and watch it get remembered.
-- **Proof panel** — the eval gate results (3× real Qwen) live in the UI.
+- **Ask both brains**: the same question answered *with* Engram memory vs a no-memory model.
+- **Teach Engram**: type a fact and watch it get remembered.
+- **Proof panel**: the eval gate results (3× real Qwen) live in the UI.
 
 ## Data model
 See `packages/memory/src/db/migrations/`. Tables: `tenants`, `episodes`,

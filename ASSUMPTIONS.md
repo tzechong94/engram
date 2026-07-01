@@ -1,19 +1,19 @@
-# Engram — Design Decisions
+# Engram: Design Decisions
 
 The calls that shaped the final system, and why.
 
 ## Memory is a separable MCP service
-- `packages/memory` is one core library with two entrypoints: an **MCP server** (stdio —
-  the online path the agent calls) and a **sleep worker** (scheduled — imports the core
-  directly, not over MCP). Durable state lives in shared Postgres, so all of a user's
-  sessions and channels share memory → cross-channel recall is free.
+- `packages/memory` is one core library with two entrypoints: an **MCP server** (stdio,
+ the online path the agent calls) and a **sleep worker** (scheduled, imports the core
+ directly, not over MCP). Durable state lives in shared Postgres, so all of a user's
+ sessions and channels share memory → cross-channel recall is free.
 - The agent runtime stays fully decoupled: it reaches memory as an MCP subprocess. The
-  memory layer drops into any agent.
+ memory layer drops into any agent.
 - **Tenant = the owner user id**, injected as `ENGRAM_TENANT_ID` into the MCP server at
-  spawn (never from tool args), so an agent can't reach another tenant's memory.
+ spawn (never from tool args), so an agent can't reach another tenant's memory.
 
 ## The knowledge graph is plain Postgres
-`entities` / `edges` tables, not a graph DB — maps cleanly to AnalyticDB and avoids extra
+`entities` / `edges` tables, not a graph DB, maps cleanly to AnalyticDB and avoids extra
 infra. Episode→cluster in the sleep phase uses embedding cosine-kNN with a threshold
 (cheap, deterministic-ish), not an LLM grouping pass.
 
@@ -25,17 +25,17 @@ timescale); pinned/recently-accessed memories are always protected.
 
 ## Retrieval (research-backed)
 - **PPR (HippoRAG):** Personalized PageRank over the entity graph is a recall source feeding
-  the rerank + budgeter, seeded by query entities matched without an online LLM call (α=0.5;
-  1-hop fallback for tiny graphs).
+ the rerank + budgeter, seeded by query entities matched without an online LLM call (α=0.5;
+ 1-hop fallback for tiny graphs).
 - **Bi-temporal (Zep/Graphiti):** notes/edges carry valid + transaction time; contradictions
-  *invalidate* rather than delete (preserved for "as of T" reads). The validity filter is
-  centralized (`noteValidSql()`) so no read leaks stale memory. Mem0-style ADD/UPDATE/
-  DELETE/NOOP ops recorded in `sleep_cycles.stats`.
+ *invalidate* rather than delete (preserved for "as of T" reads). The validity filter is
+ centralized (`noteValidSql()`) so no read leaks stale memory. Mem0-style ADD/UPDATE/
+ DELETE/NOOP ops recorded in `sleep_cycles.stats`.
 - **Core memory (MemGPT/Letta):** a bounded, per-tenant `profile` block the sleep phase
-  maintains; `memory.search` always prepends it (budget-counted).
+ maintains; `memory.search` always prepends it (budget-counted).
 - **Importance (Generative Agents):** consolidation rates importance 1–10; the budgeter
-  min-max normalizes relevance/recency/importance/diversity; sleep can also fire on
-  accumulated importance.
+ min-max normalizes relevance/recency/importance/diversity; sleep can also fire on
+ accumulated importance.
 
 ## Models (Model Studio / DashScope)
 `qwen-max` (chat + sleep synthesis), `qwen3-coder` (agent engine), embeddings @ 1024 dims,
@@ -50,11 +50,11 @@ PostgreSQL, Tair, OSS, Function Compute + EventBridge.
 
 ## Security
 - Strict per-tenant isolation: every query is scoped by `tenant_id`; the MCP server takes
-  the tenant from env, not tool args.
+ the tenant from env, not tool args.
 - DB `content` is plaintext so full-text search, embeddings, and consolidation work; "at
-  rest" is storage-layer TDE / disk encryption. App-level **AES-256-GCM** encrypts the
-  **cold-archive blobs** (forgotten/consolidated raw episodes in OSS/MinIO), which are never
-  searched.
+ rest" is storage-layer TDE / disk encryption. App-level **AES-256-GCM** encrypts the
+ **cold-archive blobs** (forgotten/consolidated raw episodes in OSS/MinIO), which are never
+ searched.
 
 ## Agent engine
 NanoClaw runtime with a `qwen` provider driving **Qwen Code** (`@qwen-code/qwen-code`,

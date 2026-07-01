@@ -1,8 +1,8 @@
-# Engram — Test Plan & Evals
+# Engram: Test Plan & Evals
 
 Two layers of testing:
-- **Automated evals** (memory layer, gated) — `pnpm --filter @engram/eval evals`
-- **Manual bot tests** (end-to-end via Telegram) — the checklist below
+- **Automated evals** (memory layer, gated), `pnpm --filter @engram/eval evals`
+- **Manual bot tests** (end-to-end via Telegram), the checklist below
 
 Track-1 (MemoryAgent) judges score: efficient storage/retrieval, **timely forgetting**, and **recall within limited context windows**. Every test below maps to one of those.
 
@@ -18,7 +18,7 @@ pnpm --filter @engram/eval evals
 QWEN_MOCK=false DASHSCOPE_API_KEY=sk-... pnpm --filter @engram/eval evals
 ```
 
-Exits non-zero if any enforced gate fails. Writes `packages/eval/out/evals.{json,md}`. Gates:
+Exits non-zero if any enforced gate fails. Writes `packages/eval/out/evals.{json, md}`. Gates:
 
 | # | Gate | Threshold |
 |---|---|---|
@@ -34,7 +34,7 @@ Exits non-zero if any enforced gate fails. Writes `packages/eval/out/evals.{json
 | 10 | Contradiction/update resolution | ≥ 75% (real only) |
 | 11 | Answer correctness (LLM-judged, all) | ≥ 80% (real only) |
 
-`EVAL_RUNS=3` runs the suite 3× and a gate must hold in ≥⅔ of runs (`EVAL_PASS_RATE`) — robust to LLM variance.
+`EVAL_RUNS=3` runs the suite 3× and a gate must hold in ≥⅔ of runs (`EVAL_PASS_RATE`), robust to LLM variance.
 
 The headline before/after-sleep report is the separate `pnpm --filter @engram/eval start`.
 
@@ -44,7 +44,7 @@ The headline before/after-sleep report is the separate `pnpm --filter @engram/ev
 
 Legend: **DM** = direct message; **GROUP** = the group chat (say the bot's name or @mention to wake it).
 
-### 1. Recall accuracy — *the core proof*
+### 1. Recall accuracy: *the core proof*
 - [ ] DM: "my flight is tomorrow at 6pm" → later "what time is my flight?" → **6pm**
 - [ ] "what's my name?" → **Tze**
 - [ ] Tell it 3 facts in separate messages, then ask each back → all correct
@@ -95,7 +95,7 @@ Legend: **DM** = direct message; **GROUP** = the group chat (say the bot's name 
 - [ ] Rapid-fire 5 messages → all handled, no dropped/duplicated replies
 - [ ] Ask the same question twice → consistent answer
 
-### 11. The viewer (presentation — `localhost:8080`)
+### 11. The viewer (presentation: `localhost:8080`)
 - [ ] Brain graph renders; nodes = entities, edges = relationships
 - [ ] "💤 Dream now" → graph grows; the **step-by-step dream trace** shows forget→cluster→consolidate→reconcile→synthesize→profile
 - [ ] A contradiction shows as a superseded (greyed) edge after a cycle
@@ -104,7 +104,7 @@ Legend: **DM** = direct message; **GROUP** = the group chat (say the bot's name 
 ---
 
 ## C. Pre-submission gate (must all be green)
-- [ ] `pnpm --filter @engram/eval evals` (real Qwen) — all enforced gates pass
+- [ ] `pnpm --filter @engram/eval evals` (real Qwen), all enforced gates pass
 - [ ] Manual sections 1–5 green (memory is the Track-1 hero)
 - [ ] One clean real-Qwen demo recorded: teach → dream (viewer) → recall → forget/update
 - [ ] Host runs as a single stable instance (not a stray `pnpm dev` that crashed)

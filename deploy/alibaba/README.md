@@ -1,23 +1,23 @@
 # Deploying Engram to Alibaba Cloud
 
-Two paths. **Start with v1 (single VM)** — it's the fastest live deploy and is faithful to
+Two paths. **Start with v1 (single VM)**, it's the fastest live deploy and is faithful to
 how Engram runs locally. Graduate to managed services later for scale/HA.
 
 ## Why a VM (not serverless)
-nanoclaw spawns a Docker container per chat session — so the runtime needs Docker. Function
+nanoclaw spawns a Docker container per chat session, so the runtime needs Docker. Function
 Compute can't spawn sibling containers. One ECS VM with Docker runs the whole thing exactly
 like your laptop.
 
-## v1 — single ECS VM (recommended) 🚀
+## v1: single ECS VM (recommended) 🚀
 
 The entire local stack (Postgres+pgvector, Redis, MinIO, the viewer, and the nanoclaw
 agent) runs on one VM. No managed services required to go live.
 
 ### 1. Provision (your Alibaba account)
 - **ECS instance:** Ubuntu 22.04, ~4 vCPU / 8–16 GB RAM, ESSD system disk (≥40 GB). Enable
-  **automatic snapshots** (session state + memory live on this disk in v1).
-- **Security group inbound:** `22` (SSH), `8080` (viewer — lock to your IP, or front with SLB
-  + `VIEWER_TOKEN`). Outbound: open (Telegram polling + Qwen API).
+ **automatic snapshots** (session state + memory live on this disk in v1).
+- **Security group inbound:** `22` (SSH), `8080` (viewer, lock to your IP, or front with SLB
+ + `VIEWER_TOKEN`). Outbound: open (Telegram polling + Qwen API).
 
 ### 2. Bootstrap the VM
 ```bash
@@ -29,8 +29,8 @@ Installs Docker + Node + pnpm, clones the repo, creates `.env`.
 ### 3. Configure + launch
 ```bash
 cd ~/engram
-nano .env       # DASHSCOPE_API_KEY=..., QWEN_MOCK=false, VIEWER_TOKEN=..., ENGRAM_MEMORY_DB_URL=...
-./engram.sh     # boots infra + migrations + viewer + sleep; seeds a demo tenant
+nano .env # DASHSCOPE_API_KEY=..., QWEN_MOCK=false, VIEWER_TOKEN=..., ENGRAM_MEMORY_DB_URL=...
+./engram.sh # boots infra + migrations + viewer + sleep; seeds a demo tenant
 ```
 Viewer: `http://<vm-ip>:8080/?token=<VIEWER_TOKEN>`.
 
@@ -50,7 +50,7 @@ installer warns if it sees `host.docker.internal` on Linux).
 That's a live deployment. Cost: the VM + your Qwen usage (pennies for memory, see the eval's
 measured `costCents`).
 
-## v2 — managed services (scale/HA upgrade)
+## v2: managed services (scale/HA upgrade)
 When you outgrow one VM, move state off it:
 
 | v1 (on the VM) | v2 (managed) | component |
@@ -70,7 +70,7 @@ validates config and scaffolds this path. True horizontal scale (nanoclaw spawni
 ACK/Kubernetes) is a further, separate change.
 
 ## Files here
-- `bootstrap.sh` — one-shot VM setup (v1).
-- `engram.service` — systemd unit (v1).
-- `.env.alibaba.example` — managed-services env template (v2).
-- `deploy.sh` — config validator + managed-services deploy scaffold (v2).
+- `bootstrap.sh`: one-shot VM setup (v1).
+- `engram.service`: systemd unit (v1).
+- `.env.alibaba.example`: managed-services env template (v2).
+- `deploy.sh`: config validator + managed-services deploy scaffold (v2).
