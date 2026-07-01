@@ -143,6 +143,9 @@ export const RAG_DOC = [
   '',
   '## DELTA — Personnel',
   'The lead cryptographer is Dr. Priya Venkataraman, reachable only at secure extension 5571.',
+  '',
+  '## ECHO — Schedule',
+  'The Project Nightingale summit keynote is on 14 March 2031 at 09:30 in Hall C.',
 ].join('\n');
 
 export const RAG_QUERIES: RecallQuery[] = [
@@ -150,6 +153,8 @@ export const RAG_QUERIES: RecallQuery[] = [
   { query: "what is Project Nightingale's budget", expectAny: ['3.2 million', '3,200,000'], answer: '3.2 million credits' },
   { query: 'what gas does the Kelmari device run on', expectAny: ['argon'], answer: 'argon gas' },
   { query: "what is the lead cryptographer's secure extension", expectAny: ['5571'], answer: 'extension 5571' },
+  // Date-bearing fact — the answer must carry the absolute date, time, and place.
+  { query: 'when and where is the Nightingale summit keynote', expectAny: ['14 march', 'march 14', 'hall c', '09:30'], answer: '14 March 2031 at 09:30 in Hall C' },
 ];
 
 /** Doc does NOT contain this — the bot must say so, not invent. */

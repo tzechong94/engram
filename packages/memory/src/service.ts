@@ -188,10 +188,14 @@ export class MemoryService {
     query: string;
     tokenBudget?: number;
     k?: number;
+    /** Deep recall also reaches the cold tier (forgotten/archived episodes) —
+     *  decay demotes memories, it doesn't delete them. Default recall stays lean. */
+    deep?: boolean;
   }): Promise<SearchResult> {
     const { tenantId, query } = args;
     const tokenBudget = args.tokenBudget ?? 1500;
     const k = args.k ?? 20;
+    const deep = args.deep ?? false;
 
     let queryEmbedding: number[] | null = null;
     try {
@@ -232,14 +236,14 @@ export class MemoryService {
     };
 
     if (queryEmbedding) {
-      for (const r of await this.repo.vectorSearchEpisodes(tenantId, queryEmbedding, k)) {
+      for (const r of await this.repo.vectorSearchEpisodes(tenantId, queryEmbedding, k, deep)) {
         add('episode', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
       }
       for (const r of await this.repo.vectorSearchNotes(tenantId, queryEmbedding, k)) {
         add('note', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
       }
     }
-    for (const r of await this.repo.keywordSearchEpisodes(tenantId, query, k)) {
+    for (const r of await this.repo.keywordSearchEpisodes(tenantId, query, k, deep)) {
       add('episode', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
     }
     // Keyword recall over notes too — finds specific tokens (numbers, days, names)
@@ -326,7 +330,10 @@ export class MemoryService {
 
     log.info('memory.search', { tenantId, candidates: candidates.length, included: included.length, core: coreMemories.length, tokensUsed: trace.tokensUsed + coreTokens });
     return {
-      memories: [...coreMemories, ...included.map((c) => ({ kind: c.kind, id: c.id, content: c.content }))],
+      memories: [...coreMemories, ...included.map((c) => {
+        const src = byId.get(c.id);
+        return { kind: c.kind, id: c.id, content: c.content, recordedAt: src ? new Date(src.createdMs).toISOString() : undefined };
+      })],
       trace: {
         tokenBudget,
         tokensUsed: trace.tokensUsed + coreTokens,

@@ -137,6 +137,9 @@ export interface PackingTrace {
 }
 
 export interface SearchResult {
-  memories: Array<{ kind: 'episode' | 'note' | 'core'; id: string; content: string }>;
+  /** `recordedAt` (ISO) is when the memory was captured — lets a consumer resolve
+   *  relative dates ("tomorrow") and always answer with an absolute date. Core
+   *  (profile) memories have no single date and omit it. */
+  memories: Array<{ kind: 'episode' | 'note' | 'core'; id: string; content: string; recordedAt?: string }>;
   trace: PackingTrace;
 }

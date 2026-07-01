@@ -24,14 +24,15 @@ Exits non-zero if any enforced gate fails. Writes `packages/eval/out/evals.{json
 |---|---|---|
 | 1 | Recall@k (retention after sleep) | ≥ 90% |
 | 2 | Cross-channel recall | true |
-| 3 | Forget precision (stale dropped) | ≥ 80% |
+| 3 | Forget precision (stale demoted from active recall) | ≥ 80% |
 | 4 | Limited-context precision@k (120 tok) | ≥ 75% |
 | 5 | RAG retrieval (doc-only facts) | ≥ 90% |
-| 6 | No-confabulation precision | 100% |
-| 7 | Retrieval p95 latency | ≤ 4000 ms (real) |
-| 8 | Consolidation (notes created) | ≥ 1 |
-| 9 | Contradiction/update resolution | ≥ 75% (real only) |
-| 10 | Answer correctness (LLM-judged) | ≥ 80% (real only) |
+| 6 | RAG answer correctness (answers from doc, incl. dates + "I don't know") | ≥ 80% (real only) |
+| 7 | No-confabulation precision | 100% |
+| 8 | Retrieval p95 latency | ≤ 4000 ms (real) |
+| 9 | Consolidation (notes created) | ≥ 1 |
+| 10 | Contradiction/update resolution | ≥ 75% (real only) |
+| 11 | Answer correctness (LLM-judged, all) | ≥ 80% (real only) |
 
 `EVAL_RUNS=3` runs the suite 3× and a gate must hold in ≥⅔ of runs (`EVAL_PASS_RATE`) — robust to LLM variance.
 

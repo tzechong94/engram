@@ -53,14 +53,20 @@ export const api = {
   episodes: (t: string) => get<{ episodes: Episode[] }>(`/${encodeURIComponent(t)}/episodes`),
   cycles: (t: string) => get<{ cycles: SleepCycle[] }>(`/${encodeURIComponent(t)}/cycles`),
   core: (t: string) => get<{ blocks: CoreBlock[] }>(`/${encodeURIComponent(t)}/core`),
-  search: (t: string, q: string, budget = 1500) =>
-    get<SearchResult>(`/${encodeURIComponent(t)}/search?q=${encodeURIComponent(q)}&budget=${budget}`),
+  search: (t: string, q: string, budget = 1500, deep = false) =>
+    get<SearchResult>(`/${encodeURIComponent(t)}/search?q=${encodeURIComponent(q)}&budget=${budget}${deep ? '&deep=1' : ''}`),
+  asof: (t: string, iso: string) =>
+    get<{ notes: Note[] }>(`/${encodeURIComponent(t)}/asof?t=${encodeURIComponent(iso)}`),
+  seedDemo: (t: string, what: 'reset' | 'trivia' | 'all' = 'all') =>
+    post<{ reset: boolean; seeded: number }>(`/${encodeURIComponent(t)}/seed-demo?what=${what}`),
   sleep: (t: string) =>
     post<{ report: SleepCycle; before: Stats; after: Stats }>(`/${encodeURIComponent(t)}/sleep`),
   teach: (t: string, content: string) =>
     postJson<{ id: string; content: string }>(`/${encodeURIComponent(t)}/teach`, { content }),
   answer: (t: string, q: string) =>
     get<AnswerResult>(`/${encodeURIComponent(t)}/answer?q=${encodeURIComponent(q)}`),
+  chat: (t: string, message: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) =>
+    postJson<{ reply: string; recalled: string[]; wroteId: string }>(`/${encodeURIComponent(t)}/chat`, { message, history }),
   evals: (t: string) => get<EvalReport>(`/${encodeURIComponent(t)}/evals`),
   uploadDoc: async (t: string, file: File) => {
     const res = await fetch(`/api/${encodeURIComponent(t)}/upload`, {

@@ -17,14 +17,16 @@ is the vehicle that shows it off.
 pnpm --filter @engram/viewer start      # brain viewer → http://localhost:8080
 ```
 
-Hit **▶ Demo**. It self-runs the whole story, no driving needed: teach 3 facts → **Ask
-both brains** (Engram answers from memory, a no-memory model shrugs) → 💤 **Dream** (the
-graph consolidates) → change a fact → Dream again → ask again: it answers the **new** value,
-the old one gone. Or use **Teach Engram** to feed it your own facts and watch.
+Hit **▶ Demo** and step through it (or **Autoplay**) — an 11-act story on one persona, Alex
+planning a Tokyo trip: teach facts → **Ask both brains** (memory vs no-memory) → upload a **PDF
+itinerary** and answer from it (and say *I don't know* when it can't) → change a fact → 💤 **Dream**
+(consolidate, grow the graph, forget the trivia, reconcile the update) → recall the new value →
+recall under a tight context budget → then show forgetting is **demotion, not deletion** (a faded
+memory reappears under **deep recall**). Each act narrates itself and scrolls the right panel in.
 
-**Proof** — the memory layer passes a **10-gate eval, 3× on real Qwen, all green**: recall,
-*timely forgetting*, *limited-context recall*, contradiction/update resolution, RAG,
-no-confabulation, ~200 ms p95. The numbers show live in the viewer's **Proof** panel, or:
+**Proof** — the memory layer passes an **11-gate eval, 3× on real Qwen, all green**: recall,
+*timely forgetting*, *limited-context recall*, contradiction/update resolution, RAG retrieval +
+answer, no-confabulation, ~200 ms p95. The numbers show live in the viewer's **Proof** panel, or:
 
 ```bash
 QWEN_MOCK=false DASHSCOPE_API_KEY=sk-... EVAL_RUNS=3 pnpm --filter @engram/eval evals
@@ -104,7 +106,7 @@ flowchart TB
   end
 
   VIEWER["🧠 Viewer · graph · dream trace · two-brains · proof"]
-  EVAL["✅ Eval · 10-gate suite · 3× real Qwen"]
+  EVAL["✅ Eval · 11-gate suite · 3× real Qwen"]
 
   User <--> ADAPT
   RUNNER <-->|reason| QWEN
@@ -165,6 +167,10 @@ The query is embedded once, then four sources feed one candidate pool:
   in a single pass (HippoRAG). Tiny graphs fall back to 1-hop expansion.
 - **Core memory**: the per-tenant `profile` block is always prepended (budget-counted).
 
+By default recall sees only the **hot (active) set**. Pass `deep` and it also searches the **cold
+tier** — memories the forget sweep demoted (§3) are retained, not deleted, so an explicit deep
+recall still finds them (the viewer's "deep recall" toggle).
+
 Then **rerank** (`gte-rerank`) sharpens relevance, blended `relevance = 0.5·recall +
 0.5·rerank` (`service.ts:311`), and the **token budgeter** (`budgeter.ts:packContext`) packs
 the winners into the limited window. Each candidate is min-max normalized and scored
@@ -184,8 +190,9 @@ cost-bounded steps** (it stops cleanly if a per-tenant cent cap is hit; each ste
 so a crash resumes):
 1. **Forget** (`forgetSweep` + `decay.ts:decideForget`) — runs *first*. Each episode's
    `retained = importance · 0.5^(age / 30 days) · (1 + 0.4·ln(1+access_count))`; below the
-   forget threshold and not **pinned** or **accessed in the last 3 days** → dropped. Pruning
-   before consolidation keeps junk out of the durable notes.
+   forget threshold and not **pinned** or **accessed in the last 3 days** → **demoted to a cold
+   tier** (status `forgotten`) — *not deleted*: a `deep` recall (§2) can still reach it. Pruning
+   the hot set before consolidation keeps junk out of both the durable notes and default recall.
 2. **Cluster** (`clusterByEmbedding`) — greedy single-pass cosine-kNN groups survivors (join
    threshold **0.55** on real embeddings, 0.15 on the noisier mock).
 3. **Consolidate** (`consolidate`, **qwen-max**) — each cluster of ≥2 becomes one durable
@@ -241,10 +248,10 @@ surfaces (via vector + keyword), or the agent says "I don't know" if it isn't th
 > day-to-day memories so it never "forgets" your documents.*
 
 ### 7. Why trust it — the eval (`packages/eval`)
-Every claim above is held to a **10-gate suite, run 3× on real Qwen, all green**: recall
+Every claim above is held to an **11-gate suite, run 3× on real Qwen, all green**: recall
 retention, cross-channel recall, forget precision, limited-context precision, RAG retrieval,
-no-confabulation, contradiction/update resolution, LLM-judged answer correctness, consolidation,
-and ~200 ms p95 latency. It exits non-zero if any gate fails, and the numbers render live in the
+RAG answer correctness (incl. dates + "I don't know"), no-confabulation, contradiction/update
+resolution, LLM-judged answer correctness, consolidation, and ~200 ms p95 latency. It exits non-zero if any gate fails, and the numbers render live in the
 viewer's **Proof** panel.
 > *A report card the system must pass on every run — so "it works" is a number, not a vibe.*
 

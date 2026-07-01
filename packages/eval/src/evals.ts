@@ -193,6 +193,7 @@ async function runOnce(
   let answerScore = -1;
   let contraAnswer = -1;
   let negAnswer = -1;
+  let ragAnswer = -1;
   const answerDetail: string[] = [];
   if (real) {
     const judgeCat = async (qs: RecallQuery[]): Promise<boolean[]> => {
@@ -211,6 +212,7 @@ async function runOnce(
     const ragJ = await judgeCat([...RAG_QUERIES, RAG_NEGATIVE]);
     contraAnswer = pct(contraJ.filter(Boolean).length, contraJ.length);
     negAnswer = pct(negJ.filter(Boolean).length, negJ.length);
+    ragAnswer = pct(ragJ.filter(Boolean).length, ragJ.length);
     const allJ = [...recallJ, ...contraJ, ...negJ, ...ragJ];
     answerScore = pct(allJ.filter(Boolean).length, allJ.length);
   }
@@ -225,6 +227,12 @@ async function runOnce(
     { name: 'Forget precision', value: `${forgetPrecision}%`, pass: forgetPrecision >= 80, enforced: true },
     { name: 'Limited-context precision@k (120 tok)', value: `${limitedCtx}%`, pass: limitedCtx >= 75, enforced: true },
     { name: 'RAG retrieval (doc-only facts)', value: `${ragRetrieval}%`, pass: ragRetrieval >= 90, enforced: true },
+    {
+      name: 'RAG answer correctness (answers from doc, incl. date + "I don\'t know")',
+      value: real ? `${ragAnswer}% (answer)` : 'skipped (mock)',
+      pass: !real || ragAnswer >= 80,
+      enforced: real,
+    },
     {
       name: 'No-confabulation (answers "I don\'t know")',
       value: real ? `${negAnswer}% (answer)` : `${precision}% (token)`,

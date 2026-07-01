@@ -140,8 +140,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     case 'search': {
       const q = url.searchParams.get('q') || '';
       const budget = Number(url.searchParams.get('budget') || 1500);
+      const deep = url.searchParams.get('deep') === '1';
       if (!q) return json(res, { error: 'q required' }, 400);
-      return json(res, await memory.search({ tenantId: tenant, query: q, tokenBudget: budget }));
+      return json(res, await memory.search({ tenantId: tenant, query: q, tokenBudget: budget, deep }));
     }
     case 'upload': {
       // Ingest an uploaded document as durable RAG knowledge for this tenant.
@@ -169,6 +170,46 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         sleeping = false;
       }
     }
+    case 'seed-demo': {
+      // Reset and/or seed the scripted demo tenant so the "▶ Demo" arc is repeatable.
+      // `?what=reset` wipes; `?what=trivia` inserts aged chatter; `all` (default) both.
+      // Trivia is seeded *right before the dream* (not up front) so the demo's own
+      // pre-dream recalls can't bump its last_accessed and shield it from the sweep.
+      // Guarded to demo* tenants so the viewer can never wipe real memory.
+      if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
+      if (!tenant.startsWith('demo')) return json(res, { error: 'seed-demo is only allowed for demo* tenants' }, 403);
+      const what = url.searchParams.get('what') || 'all';
+      if (what === 'reset' || what === 'all') {
+        await repo.resetTenant(tenant);
+      }
+      await repo.ensureTenant(tenant);
+      let seeded = 0;
+      if (what === 'trivia' || what === 'all') {
+        // Aged, low-value chatter — backdated 90 days at importance 0.08 so the dream's
+        // forget sweep demotes it to the cold tier (retained ≈ 0.08·0.5^3 ≈ 0.01 < 0.15).
+        // It is NOT deleted: deep recall can still find it.
+        const trivia = [
+          'lol that is hilarious',
+          'brb grabbing a coffee',
+          'ugh mondays, am i right',
+          'the weather is nice today, might go for a walk',
+          'haha ok sounds good',
+          'meh, nothing much going on today',
+        ];
+        let vecs: Array<number[] | null> = trivia.map(() => null);
+        try { vecs = await qwen.embed(trivia); } catch { /* keyword deep-recall still works without embeddings */ }
+        const aged = new Date(Date.now() - 90 * 86_400_000).toISOString();
+        for (let i = 0; i < trivia.length; i++) {
+          await repo.insertEpisodeAt({
+            tenantId: tenant, content: trivia[i]!, embedding: vecs[i] ?? null,
+            sourceChannel: 'chat', importance: 0.08, createdAt: aged, lastAccessedAt: aged,
+          });
+        }
+        seeded = trivia.length;
+      }
+      log.info('demo seeded', { tenant, what, seeded });
+      return json(res, { reset: what !== 'trivia', seeded });
+    }
     case 'teach': {
       // Interactive playground: teach Engram a fact (writes one episode).
       if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
@@ -191,19 +232,70 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const q = url.searchParams.get('q') || '';
       if (!q) return json(res, { error: 'q required' }, 400);
       const recall = await memory.search({ tenantId: tenant, query: q, tokenBudget: 1200 });
-      const memBlock = recall.memories.map((m) => `- ${m.content}`).join('\n');
+      const today = new Date().toISOString().slice(0, 10);
+      const memBlock = recall.memories
+        .map((m) => (m.recordedAt ? `- (recorded ${m.recordedAt.slice(0, 10)}) ${m.content}` : `- ${m.content}`))
+        .join('\n');
       const ask = async (sys: string, user: string): Promise<string> => {
         const r = await qwen.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { tier: 'max' });
         return r.text.trim();
       };
       const [withMemory, withoutMemory] = await Promise.all([
         ask(
-          'You are a personal assistant WITH long-term memory of this user. Answer ONLY from the memories provided. If they do not contain the answer, say "I don\'t know." One sentence.',
+          `You are a personal assistant WITH long-term memory of this user. Today is ${today}. Answer ONLY from the memories provided. ` +
+            'For anything time-related, always give the full absolute calendar date AND time (e.g., "July 17, 2026 at 8pm"). ' +
+            'NEVER answer with relative words like "today", "tomorrow", "yesterday", or "next Friday" — convert them to the actual date. ' +
+            'Each memory is prefixed in parentheses with the date it was recorded; add the relative offset to that date. ' +
+            'Example: a memory "(recorded 2026-07-01) flight is tomorrow at 6pm" means the flight is on 2026-07-02 (July 2, 2026) at 6pm. ' +
+            'Never invent specifics (names, companies, numbers) that are not in the memories. ' +
+            'If the memories do not contain the answer, say "I don\'t know." One sentence.',
           `Memories about the user:\n${memBlock || '(no memories)'}\n\nQuestion: ${q}`,
         ),
         ask('You are a personal assistant with NO memory of this user. Answer the question. One sentence.', `Question: ${q}`),
       ]);
       return json(res, { withMemory, withoutMemory, recalled: recall.memories.map((m) => m.content) });
+    }
+    case 'chat': {
+      // Live chat playground: a minimal agent backed by Engram. Recall long-term
+      // memory → answer grounded in it → capture the user's message so memory
+      // accumulates. Lets anyone test the memory system in the browser (no bot).
+      if (req.method !== 'POST') return json(res, { error: 'use POST' }, 405);
+      const buf = await readBody(req, 256 * 1024);
+      let message = '';
+      let history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+      try {
+        const b = JSON.parse(buf.toString('utf8') || '{}') as { message?: string; history?: Array<{ role?: string; content?: string }> };
+        message = String(b.message || '').trim();
+        if (Array.isArray(b.history)) {
+          history = b.history.slice(-6).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content || '') }));
+        }
+      } catch {
+        /* bad json */
+      }
+      if (!message) return json(res, { error: 'message required' }, 400);
+      await repo.ensureTenant(tenant);
+      // Recall BEFORE writing so the reply uses prior memory, not the current turn.
+      const recall = await memory.search({ tenantId: tenant, query: message, tokenBudget: 1500 });
+      const today = new Date().toISOString().slice(0, 10);
+      const memBlock = recall.memories
+        .map((m) => (m.recordedAt ? `- (recorded ${m.recordedAt.slice(0, 10)}) ${m.content}` : `- ${m.content}`))
+        .join('\n');
+      const sys =
+        `You are a helpful personal assistant with long-term memory of this user. Today is ${today}. ` +
+        'Use the remembered facts below to personalize your reply; weave them in naturally, do not list them back. ' +
+        'Be warm and concise (1–3 sentences). For anything time-related, give the full absolute date and time, and ' +
+        'resolve relative dates ("tomorrow", "next Friday") using each memory\'s recorded date.\n' +
+        'CRITICAL — do NOT hallucinate. Only state specific details (names, companies, people, places, ' +
+        'phone numbers, amounts, dates) that literally appear in the remembered facts below or in the user\'s ' +
+        'message. Never invent, guess, or embellish a specific the user has not given you. If you don\'t have a ' +
+        'detail (e.g., the name of their client), say you don\'t have it and offer to record it — do not make one up.\n\n' +
+        `What you remember about the user:\n${memBlock || '(nothing yet)'}`;
+      const msgs = [{ role: 'system' as const, content: sys }, ...history, { role: 'user' as const, content: message }];
+      const r = await qwen.chat(msgs, { tier: 'max' });
+      // Capture the user's message as a durable memory for future turns.
+      const wrote = await memory.write({ tenantId: tenant, content: message, sourceChannel: 'viewer-chat' });
+      log.info('viewer chat', { tenant, wroteId: wrote.id, recalled: recall.memories.length });
+      return json(res, { reply: r.text.trim(), recalled: recall.memories.map((m) => m.content), wroteId: wrote.id });
     }
     case 'evals': {
       // Proof panel: serve the latest eval gate results (packages/eval/out/evals.json).
