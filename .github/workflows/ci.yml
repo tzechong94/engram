@@ -1,0 +1,25 @@
+name: CI
+
+# Build + typecheck the workspace on every push and PR. No cloud creds, no DB:
+# the package builds run `tsc`, which typechecks shared/memory; the viewer bundles
+# with vite. Green here means the code compiles before it can deploy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build all packages (typechecks shared + memory via tsc)
+        run: pnpm run build

@@ -63,10 +63,10 @@ export const api = {
     post<{ report: SleepCycle; before: Stats; after: Stats }>(`/${encodeURIComponent(t)}/sleep`),
   teach: (t: string, content: string) =>
     postJson<{ id: string; content: string }>(`/${encodeURIComponent(t)}/teach`, { content }),
-  answer: (t: string, q: string) =>
-    get<AnswerResult>(`/${encodeURIComponent(t)}/answer?q=${encodeURIComponent(q)}`),
-  chat: (t: string, message: string, history: Array<{ role: 'user' | 'assistant'; content: string }>) =>
-    postJson<{ reply: string; recalled: string[]; wroteId: string }>(`/${encodeURIComponent(t)}/chat`, { message, history }),
+  answer: (t: string, q: string, model?: string) =>
+    get<AnswerResult>(`/${encodeURIComponent(t)}/answer?q=${encodeURIComponent(q)}${model ? `&model=${encodeURIComponent(model)}` : ''}`),
+  chat: (t: string, message: string, history: Array<{ role: 'user' | 'assistant'; content: string }>, model?: string) =>
+    postJson<{ reply: string; recalled: string[]; wroteId: string }>(`/${encodeURIComponent(t)}/chat`, { message, history, model }),
   evals: (t: string) => get<EvalReport>(`/${encodeURIComponent(t)}/evals`),
   uploadDoc: async (t: string, file: File) => {
     const res = await fetch(`/api/${encodeURIComponent(t)}/upload`, {

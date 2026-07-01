@@ -39,6 +39,11 @@ const sleepPhase = new SleepPhase(infra.store, qwen, infra.blob, {
 });
 let sleeping = false;
 
+// Models the viewer's switcher is allowed to select. Guards against arbitrary
+// strings reaching DashScope. Returns undefined (tier default) if not allowed.
+const ALLOWED_MODELS = new Set(['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-max-latest', 'qwen-plus-latest', 'qwen-turbo-latest']);
+const pickModel = (m: string | null | undefined): string | undefined => (m && ALLOWED_MODELS.has(m) ? m : undefined);
+
 function json(res: http.ServerResponse, body: unknown, status = 200): void {
   const s = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -231,13 +236,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       // WITHOUT (a cold model). The headline proof that memory changes the answer.
       const q = url.searchParams.get('q') || '';
       if (!q) return json(res, { error: 'q required' }, 400);
+      const model = pickModel(url.searchParams.get('model'));
       const recall = await memory.search({ tenantId: tenant, query: q, tokenBudget: 1200 });
       const today = new Date().toISOString().slice(0, 10);
       const memBlock = recall.memories
         .map((m) => (m.recordedAt ? `- (recorded ${m.recordedAt.slice(0, 10)}) ${m.content}` : `- ${m.content}`))
         .join('\n');
       const ask = async (sys: string, user: string): Promise<string> => {
-        const r = await qwen.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { tier: 'max' });
+        const r = await qwen.chat([{ role: 'system', content: sys }, { role: 'user', content: user }], { tier: 'max', model });
         return r.text.trim();
       };
       const [withMemory, withoutMemory] = await Promise.all([
@@ -263,9 +269,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const buf = await readBody(req, 256 * 1024);
       let message = '';
       let history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+      let model: string | undefined;
       try {
-        const b = JSON.parse(buf.toString('utf8') || '{}') as { message?: string; history?: Array<{ role?: string; content?: string }> };
+        const b = JSON.parse(buf.toString('utf8') || '{}') as { message?: string; history?: Array<{ role?: string; content?: string }>; model?: string };
         message = String(b.message || '').trim();
+        model = pickModel(b.model);
         if (Array.isArray(b.history)) {
           history = b.history.slice(-6).map((h) => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content || '') }));
         }
@@ -291,7 +299,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         'detail (e.g., the name of their client), say you don\'t have it and offer to record it — do not make one up.\n\n' +
         `What you remember about the user:\n${memBlock || '(nothing yet)'}`;
       const msgs = [{ role: 'system' as const, content: sys }, ...history, { role: 'user' as const, content: message }];
-      const r = await qwen.chat(msgs, { tier: 'max' });
+      const r = await qwen.chat(msgs, { tier: 'max', model });
       // Capture the user's message as a durable memory for future turns.
       const wrote = await memory.write({ tenantId: tenant, content: message, sourceChannel: 'viewer-chat' });
       log.info('viewer chat', { tenant, wroteId: wrote.id, recalled: recall.memories.length });

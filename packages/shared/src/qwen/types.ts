@@ -13,6 +13,8 @@ export interface ChatMessage {
 export interface ChatOptions {
   /** Which tier: 'max' for reasoning/synthesis, 'turbo' for cheap classification. */
   tier?: 'max' | 'turbo';
+  /** Explicit model id override (e.g. from the viewer's model switcher). Wins over tier. */
+  model?: string;
   temperature?: number;
   maxTokens?: number;
   /** Ask for strict JSON back (uses response_format when supported). */

@@ -1,0 +1,69 @@
+name: Deploy to Alibaba ECS
+
+# On every push to main, SSH into the ECS VM and redeploy: pull, rebuild, restart
+# the systemd service. This is the v1 (single-VM) path from deploy/alibaba/README.md.
+#
+# One-time setup (yours):
+#   1. Provision the VM and run deploy/alibaba/bootstrap.sh (clones the repo to ~/engram,
+#      installs Docker/Node/pnpm) and the engram.service systemd unit.
+#   2. Add three GitHub repo secrets (Settings -> Secrets and variables -> Actions):
+#        DEPLOY_HOST     the VM's public IP or domain
+#        DEPLOY_USER     the SSH user (e.g. ubuntu)
+#        DEPLOY_SSH_KEY  a private key whose public half is in the VM's ~/.ssh/authorized_keys
+#   3. Make sure the VM's ~/engram tracks this repo's main and the deploy user can
+#      `sudo systemctl restart engram` without a password prompt (add a sudoers rule).
+#
+# After that, `git push` to main updates the live deployment automatically.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  # Build first so a broken commit never reaches the VM.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # The deploy only runs once you flip the repo variable DEPLOY_ENABLED=true
+    # (Settings -> Secrets and variables -> Actions -> Variables). Until then the
+    # workflow stays green and just builds — no red X before the VM exists.
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    steps:
+      - name: Redeploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/engram
+            git fetch --all --prune
+            git reset --hard origin/main
+            pnpm install --frozen-lockfile || pnpm install
+            pnpm --filter @engram/shared build
+            pnpm --filter @engram/memory build
+            pnpm --filter @engram/viewer build
+            sudo systemctl restart engram
+            sleep 3
+            curl -fsS "http://localhost:${VIEWER_PORT:-8080}/api/tenants" >/dev/null && echo "viewer healthy" || echo "warn: health check did not pass"
+            echo "deployed $(git rev-parse --short HEAD)"

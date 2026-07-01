@@ -43,6 +43,7 @@ export function App() {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatRecalled, setChatRecalled] = useState<string[]>([]);
+  const [chatModel, setChatModel] = useState<string>(() => localStorage.getItem('engram-model') || 'qwen-max');
   const chatFileRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const fgRef = useRef<any>(null);
@@ -63,6 +64,10 @@ export function App() {
   useEffect(() => {
     if (tenant) { try { localStorage.setItem('engram-tenant', tenant); } catch { /* ignore */ } }
   }, [tenant]);
+  // Remember the chosen chat model.
+  useEffect(() => {
+    try { localStorage.setItem('engram-model', chatModel); } catch { /* ignore */ }
+  }, [chatModel]);
 
   const load = useCallback((t: string) => {
     if (!t) return;
@@ -133,7 +138,7 @@ export function App() {
     setAnswering(true);
     setAnswer(null);
     try {
-      setAnswer(await api.answer(tenant, q));
+      setAnswer(await api.answer(tenant, q, chatModel));
     } catch (e) {
       setAnswer({ withMemory: `⚠ ${e instanceof Error ? e.message : 'failed'}`, withoutMemory: '', recalled: [] });
     } finally {
@@ -166,7 +171,7 @@ export function App() {
     setChatInput('');
     setChatBusy(true);
     try {
-      const r = await api.chat(tenant, text, history);
+      const r = await api.chat(tenant, text, history, chatModel);
       setChatMsgs((m) => [...m, { role: 'assistant', content: r.reply }]);
       setChatRecalled(r.recalled);
       load(tenant); // refresh graph/stats so the Brain view reflects the new memory
@@ -253,7 +258,7 @@ export function App() {
   const demoPushUser = async (text: string) => {
     setChatMsgs((m) => [...m, { role: 'user', content: text }]);
     try {
-      const r = await api.chat(DEMO_T, text, []);
+      const r = await api.chat(DEMO_T, text, [], chatModel);
       setChatMsgs((m) => [...m, { role: 'assistant', content: r.reply }]);
       setChatRecalled(r.recalled);
     } catch (e) {
@@ -685,9 +690,19 @@ export function App() {
           <div className="chatpane">
             <div className="chathead">
               <span className="muted">💬 <b>{tenant || '—'}</b> · the transcript is just a view — memory lives in Engram</span>
-              <button className="clearchat" disabled={chatMsgs.length === 0}
-                title="Clears the on-screen transcript only. Engram memory is untouched — ask again and it still recalls."
-                onClick={clearChat}>🗑 Clear chat</button>
+              <span className="chatctrls">
+                <label className="modelpick" title="Which Qwen model writes the reply. Internal memory work (consolidation, extraction) still routes qwen-max / qwen-turbo by task.">
+                  model
+                  <select value={chatModel} onChange={(e) => setChatModel(e.target.value)}>
+                    <option value="qwen-max">qwen-max</option>
+                    <option value="qwen-plus">qwen-plus</option>
+                    <option value="qwen-turbo">qwen-turbo</option>
+                  </select>
+                </label>
+                <button className="clearchat" disabled={chatMsgs.length === 0}
+                  title="Clears the on-screen transcript only. Engram memory is untouched — ask again and it still recalls."
+                  onClick={clearChat}>🗑 Clear chat</button>
+              </span>
             </div>
             <div className="chatlog" id="chatlog">
               {chatMsgs.length === 0 && (

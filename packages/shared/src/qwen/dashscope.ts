@@ -56,7 +56,7 @@ export class DashScopeQwenClient implements QwenClient {
   }
 
   async chat(messages: ChatMessage[], opts?: ChatOptions): Promise<ChatResult> {
-    const model = opts?.tier === 'turbo' ? this.cfg.turboModel : this.cfg.chatModel;
+    const model = opts?.model ?? (opts?.tier === 'turbo' ? this.cfg.turboModel : this.cfg.chatModel);
     const body: Record<string, unknown> = {
       model,
       messages,
