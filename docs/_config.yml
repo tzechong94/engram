@@ -1,0 +1,9 @@
+# GitHub Pages (deploy-from-branch, /docs folder). Renders index.md as the site
+# homepage with a built-in theme. The other files in docs/ are internal notes, so
+# they're excluded from the published site.
+title: "Building Engram"
+description: "A self-managing memory layer for AI agents, on Qwen"
+theme: jekyll-theme-cayman
+exclude:
+  - agent-and-deploy.md
+  - memory-research-summary.md
