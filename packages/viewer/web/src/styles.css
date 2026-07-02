@@ -62,6 +62,60 @@ button.primary { background: linear-gradient(180deg, #155e63, #0c3a40); border-c
 .pill.warn { background: rgba(250, 204, 21, 0.15); color: #fde047; }
 .pill.deep { background: rgba(124, 58, 237, 0.22); color: #d8b4fe; }
 .cycle.on { border-color: var(--accent); background: rgba(45, 212, 191, 0.08); }
+
+/* ── Demo stage: one full-size theater, zero scrolling ─────────────────────── */
+.stagewrap { display: grid; grid-template-columns: 200px 1fr; min-width: 0; min-height: 0; height: 100%; background: radial-gradient(1200px 600px at 70% -10%, rgba(124, 58, 237, 0.10), transparent), radial-gradient(900px 500px at 20% 110%, rgba(45, 212, 191, 0.07), transparent); }
+.stagerail { border-right: 1px solid var(--border); padding: 18px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.railstep { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 12px; color: var(--muted); }
+.railstep .raildot { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
+.railstep.done { color: var(--text); }
+.railstep.done .raildot { background: rgba(45, 212, 191, 0.18); border-color: var(--accent); color: var(--accent); }
+.railstep.now { color: #f5f3ff; background: rgba(124, 58, 237, 0.14); font-weight: 600; }
+.railstep.now .raildot { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.railtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stagebody { min-width: 0; overflow-y: auto; padding: 34px 44px; display: flex; flex-direction: column; align-items: center; }
+.stagehead { text-align: center; max-width: 720px; margin-bottom: 26px; }
+.stagehead h1 { margin: 0 0 10px; font-size: 30px; letter-spacing: 0.3px; }
+.stagecaption { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 0; }
+.stageerr { color: #fda4af; font-size: 13px; margin-bottom: 14px; }
+.stagecol { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 660px; align-items: flex-start; }
+.stagecol .bubble { max-width: 92%; font-size: 15px; }
+.stagecol .bubble.assistant { align-self: flex-start; }
+.stagecol .bubble.user { align-self: flex-end; }
+.stagecol .bubble.big { font-size: 16px; padding: 13px 17px; }
+.bubble.user.hot { outline: 2px solid rgba(250, 204, 21, 0.6); }
+.stagein { animation: stagein 0.35s ease-out; }
+@keyframes stagein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.stagewait { color: var(--muted); font-size: 14px; font-style: italic; padding: 12px 0; animation: stagein 0.3s; }
+.stagecard.herocard { border: 1px solid var(--border); border-radius: 14px; padding: 22px 28px; background: rgba(15, 19, 30, 0.7); text-align: center; }
+.heroline { font-size: 16px; margin: 4px 0; }
+.stagebrains { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 860px; animation: stagein 0.4s; }
+.brain.big { padding: 18px 20px; }
+.brain.big .btext { font-size: 16px; line-height: 1.5; }
+.brain.with.big { border-color: rgba(45, 212, 191, 0.55); box-shadow: 0 0 34px rgba(45, 212, 191, 0.10); }
+.pdfchip { display: inline-flex; align-items: center; gap: 8px; align-self: center; border: 1px solid var(--border); border-radius: 12px; padding: 13px 18px; font-size: 15px; color: var(--text); text-decoration: none; background: rgba(15, 19, 30, 0.7); transition: border-color .15s; }
+.pdfchip:hover { border-color: var(--accent); }
+.stagebadge { align-self: center; margin-top: 6px; font-size: 13px; color: #86efac; background: rgba(34, 197, 94, 0.10); border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 999px; padding: 6px 14px; animation: stagein 0.4s; }
+.stagebadge.deepbadge { color: #d8b4fe; background: rgba(124, 58, 237, 0.12); border-color: rgba(124, 58, 237, 0.45); }
+.conflictmark { align-self: center; color: #fde047; font-size: 13px; font-weight: 600; }
+.dreamingstage { display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 30px 0; }
+.dreamglyphs { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 560px; }
+.dreampulse { border: 1px solid var(--border); border-radius: 999px; padding: 6px 13px; font-size: 13px; color: var(--muted); animation: dreampulse 2.4s ease-in-out infinite; }
+@keyframes dreampulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; color: #e9d5ff; border-color: #7c3aed; box-shadow: 0 0 16px rgba(124, 58, 237, 0.35); } }
+.dreamstats { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-self: center; animation: stagein 0.4s; }
+.dreamstats span { border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; font-size: 14px; font-weight: 600; background: rgba(15, 19, 30, 0.7); }
+.dreamstats .hotstat { color: #fda4af; border-color: rgba(251, 113, 133, 0.4); }
+.stagetrace { width: 100%; max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; background: rgba(10, 13, 20, 0.75); }
+.curvechart { width: 100%; max-width: 560px; align-self: center; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: rgba(15, 19, 30, 0.7); animation: stagein 0.4s; }
+.curvetitle { font-size: 12px; color: var(--muted); margin-bottom: 6px; text-align: center; }
+.curvelegend { display: flex; gap: 18px; justify-content: center; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.curvelegend i { display: inline-block; width: 16px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 2px; }
+.curvelegend .lm { background: #2dd4bf; }
+.curvelegend .lb { background: #64748b; }
+.stagegates { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; align-self: center; animation: stagein 0.5s; }
+.gatechip { font-size: 14px; }
+.stageprofile { align-self: center; max-width: 560px; font-size: 13px; color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; background: rgba(15, 19, 30, 0.7); line-height: 1.5; animation: stagein 0.55s; }
+.stageclose { align-self: center; margin-top: 8px; font-size: 14px; font-weight: 600; animation: stagein 0.6s; }
 .side { border-right: 1px solid var(--border); overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .graphwrap { position: relative; min-width: 0; }
 .recenter { position: absolute; top: 10px; right: 12px; z-index: 5; font-size: 12px; padding: 4px 10px; background: rgba(8,10,16,0.7); border: 1px solid var(--border); }

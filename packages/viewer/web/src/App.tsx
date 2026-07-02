@@ -36,8 +36,8 @@ export function App() {
   const [teachText, setTeachText] = useState('');
   const [teachMsg, setTeachMsg] = useState('');
   const [evals, setEvals] = useState<EvalReport | null>(null);
-  const [demo, setDemo] = useState<{ active: boolean; running: boolean; idx: number; auto: boolean; step: string; log: string[]; mode: 'panel' | 'chat' }>(
-    { active: false, running: false, idx: 0, auto: false, step: '', log: [], mode: 'panel' });
+  const [demo, setDemo] = useState<{ active: boolean; running: boolean; idx: number; auto: boolean }>(
+    { active: false, running: false, idx: 0, auto: false });
   // Live chat playground
   const [chatMsgs, setChatMsgs] = useState<Array<{ role: 'user' | 'assistant' | 'system'; content: string }>>([]);
   const [chatInput, setChatInput] = useState('');
@@ -244,208 +244,156 @@ export function App() {
     }
   }, [chatMsgs]);
 
-  // Demo Mode — a scripted "documentary" exercising every memory feature on a
-  // coherent persona (Alex planning a Tokyo trip). Step-through by default so a
-  // presenter controls the pace; an optional autoplay drives it hands-free.
+  // Demo Mode — one scripted story on one full-size stage. Each act renders its
+  // payoff big and centered in the main pane: no sidebar scrolling, no view
+  // hopping. Step through it live, or Autoplay (~90-120s total) to record the
+  // whole thing as a video with voiceover.
   const DEMO_T = 'demo';
   const fetchDemoPdf = async (): Promise<File> => {
     const blob = await (await fetch('/tokyo-itinerary.pdf')).blob();
     return new File([blob], 'tokyo-itinerary.pdf', { type: 'application/pdf' });
   };
-  // Bring the panel an act is driving into view, so nothing important needs manual
-  // scrolling during the demo. Also asks a collapsed card to open itself first.
-  // Small delay lets the newly-opened content render before scrolling.
-  const scrollToCard = (id: string) => {
-    window.dispatchEvent(new CustomEvent('engram-open-card', { detail: id }));
-    window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
-  };
 
-  // Scripted-demo helper: post a user message in the chat and get the memory-grounded reply.
-  const demoPushUser = async (text: string) => {
-    setChatMsgs((m) => [...m, { role: 'user', content: text }]);
-    try {
-      const r = await api.chat(DEMO_T, text, [], chatModel);
-      setChatMsgs((m) => [...m, { role: 'assistant', content: r.reply }]);
-      setChatRecalled(r.recalled);
-    } catch (e) {
-      setChatMsgs((m) => [...m, { role: 'assistant', content: `⚠ ${e instanceof Error ? e.message : 'chat failed'}` }]);
-    }
-  };
-  const demoSystem = (content: string) => setChatMsgs((m) => [...m, { role: 'system', content }]);
+  interface StageData {
+    taught?: string[];
+    brains?: AnswerResult;
+    ragChunks?: number;
+    ragQ?: string;
+    ragAnswer?: string;
+    wifiAnswer?: string;
+    dinner?: { v1: string; v2: string };
+    dreaming?: boolean;
+    dreamStats?: Record<string, number>;
+    dreamCycle?: SleepCycle | null;
+    updatedReply?: string;
+    coffee?: { reply: string; deepened: boolean };
+    curve?: { memory: number[]; baseline: number[] } | null;
+    profileText?: string;
+    error?: string;
+  }
+  const [stage, setStage] = useState<StageData>({});
+  const st = (patch: Partial<StageData>) => setStage((s) => ({ ...s, ...patch }));
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  type DemoAct = { title: string; run: (say: (s: string) => void) => Promise<void> };
+  // dwell = how long Autoplay lingers AFTER the act finishes (read time).
+  type DemoAct = { title: string; caption: string; dwell: number; run: () => Promise<void> };
 
-  const demoActsPanel: DemoAct[] = [
-    { title: 'Fresh start', run: async (say) => {
-      say('Wiping the demo tenant for a clean, repeatable run…');
-      await api.seedDemo(DEMO_T, 'reset'); load(DEMO_T);
-      say('Blank slate. Meet Alex, planning a work trip to Tokyo.');
-    } },
-    { title: 'Capture + two brains', run: async (say) => {
-      say('Alex tells his assistant a few durable things about himself…');
-      await api.teach(DEMO_T, 'I am allergic to peanuts');
-      await api.teach(DEMO_T, 'I am vegetarian');
-      await api.teach(DEMO_T, 'I always book a window seat when I fly');
-      await api.teach(DEMO_T, "My wife Sarah's birthday is March 12");
-      load(DEMO_T);
-      const q = 'What should you keep in mind before booking me a dinner reservation?';
-      setAsk(q); scrollToCard('card-answer'); say('Now ask BOTH brains the same question — one has Engram memory, one has none.');
-      await runAnswer(q); scrollToCard('card-answer');
-      say('With memory: peanut allergy + vegetarian. Without: a polite shrug. That is the whole pitch.');
-    } },
-    { title: 'Document RAG', run: async (say) => {
-      scrollToCard('card-docs'); say('Alex uploads his Tokyo trip itinerary — a real PDF…');
-      await onUpload(await fetchDemoPdf());
-      const q = 'What is my hotel confirmation number and how many bags can I check?';
-      setAsk(q); scrollToCard('card-answer'); say('Chunked, embedded, stored as durable document memory. Ask it something only the file knows.');
-      await runAnswer(q); scrollToCard('card-answer');
-      say('Answered straight from the PDF: confirmation PHT-8842, 2 checked bags of 23 kg.');
-    } },
-    { title: 'No confabulation', run: async (say) => {
-      const q = 'What is the wifi password at my Tokyo hotel?';
-      setAsk(q); scrollToCard('card-answer'); say('Now ask something the itinerary does NOT contain…');
-      await runAnswer(q); scrollToCard('card-answer');
-      say('It says it does not know — instead of inventing a password. No confabulation.');
-    } },
-    { title: 'A plan that changes', run: async (say) => {
-      say('Alex makes a plan: "Book the client dinner for July 16 at 7pm."');
-      await api.teach(DEMO_T, 'Book the client dinner for July 16 at 7pm'); load(DEMO_T);
-      say('…then it changes: "The client pushed our dinner to July 17 at 8pm."');
-      await api.teach(DEMO_T, 'Update: the client moved our dinner to July 17 at 8pm'); load(DEMO_T);
-      say('Two conflicting facts are now in memory. The sleep cycle will reconcile them.');
-    } },
-    { title: 'Dream (sleep cycle)', run: async (say) => {
-      say('Over the past weeks it also overheard a lot of idle chatter — seeding it now, aged 90 days.');
-      await api.seedDemo(DEMO_T, 'trivia'); load(DEMO_T);
-      say('💤 Engram sleeps — clustering episodes into notes, growing the graph, forgetting the trivia, reconciling the update…');
-      await api.sleep(DEMO_T);
-      const cs = await api.cycles(DEMO_T); setCycles(cs.cycles); setSelectedCycle(cs.cycles[0] ?? null);
-      load(DEMO_T);
-      scrollToCard('card-sleep');
-      const s = (cs.cycles[0]?.stats ?? {}) as Record<string, number>;
-      say(`Dream complete — +${s.consolidated ?? 0} durable notes · ${s.entitiesMerged ?? 0} neurons · −${s.forgotten ?? 0} trivia demoted · ${s.connectionsSynthesized ?? 0} new link(s). The step-by-step dream trace is open below.`);
-    } },
-    { title: 'Recall the update', run: async (say) => {
-      const q = 'When is my client dinner?';
-      setAsk(q); scrollToCard('card-answer'); say('The dinner was first set for July 16, 7pm, then moved. Ask about it now…');
-      await runAnswer(q); scrollToCard('card-answer');
-      say('It answers July 17, 8pm — the current truth. The original 7pm was not erased (it is archived, and deep recall still finds it). Engram gets more accurate without forgetting that it changed.');
-    } },
-    { title: 'Limited context window', run: async (say) => {
-      const q = 'Summarize everything you know about me and my trip';
-      setQuery(q); scrollToCard('card-recall'); say('Ask a broad question but starve it of context — only ~120 tokens allowed.');
-      await runSearch({ q, budget: 120 }); scrollToCard('card-recall');
-      say('The budgeter packs only the few most critical facts and drops the rest — recall within a limited window, with the full scoring trace shown.');
-    } },
-    { title: 'Forgetting is demotion', run: async (say) => {
-      const q = 'coffee';
-      setQuery(q); setDeepRecall(false); scrollToCard('card-recall');
-      say('Recall the old "grabbing a coffee" chatter the normal way…');
-      await runSearch({ q, deep: false }); scrollToCard('card-recall');
-      say('Nothing surfaces — the trivia has faded from active recall. But is it actually gone?');
-    } },
-    { title: '…still findable (deep)', run: async (say) => {
-      const q = 'coffee';
-      setQuery(q); setDeepRecall(true); scrollToCard('card-recall');
-      say('Flip on DEEP recall to reach the cold tier…');
-      await runSearch({ q, deep: true }); scrollToCard('card-recall');
-      say("There it is. Engram demotes, it does not delete — like how you stop reciting last week's small talk but can still recall it when asked.");
-    } },
-    { title: 'What it became', run: async (say) => {
-      setDeepRecall(false); load(DEMO_T); scrollToCard('card-profile');
-      say('Here is the learned Profile (read first on every turn) and the Proof panel — 12 eval gates, 3× on real Qwen. A memory that gets more accurate over time.');
-    } },
+  const demoActs: DemoAct[] = [
+    { title: 'Meet Engram', dwell: 3800,
+      caption: 'A self-managing memory layer for AI agents, built on Qwen. This is Alex, planning a work trip to Tokyo — watch his assistant learn.',
+      run: async () => {
+        setStage({});
+        await api.seedDemo(DEMO_T, 'reset');
+        load(DEMO_T);
+      } },
+    { title: 'It captures what matters', dwell: 3600,
+      caption: 'Four durable facts, written to memory as they are said. No LLM on the write path — capture is instant.',
+      run: async () => {
+        const facts = [
+          'I am allergic to peanuts',
+          'I am vegetarian',
+          'I always book a window seat when I fly',
+          "My wife Sarah's birthday is March 12",
+        ];
+        for (const f of facts) {
+          await api.teach(DEMO_T, f);
+          setStage((s) => ({ ...s, taught: [...(s.taught ?? []), f] }));
+          await pause(350);
+        }
+        load(DEMO_T);
+      } },
+    { title: 'Memory changes the answer', dwell: 7000,
+      caption: 'The same question, asked of the same model — with Engram memory, and without.',
+      run: async () => {
+        st({ brains: await api.answer(DEMO_T, 'What should you keep in mind before booking me a dinner reservation?', chatModel) });
+      } },
+    { title: 'Ground it in documents', dwell: 6500,
+      caption: 'A real PDF itinerary — chunked, embedded, stored as durable memory. Click the file to see exactly what it read.',
+      run: async () => {
+        const up = await api.uploadDoc(DEMO_T, await fetchDemoPdf());
+        st({ ragChunks: up.chunks });
+        const q = 'What is my hotel confirmation number and how many bags can I check?';
+        const a = await api.answer(DEMO_T, q, chatModel);
+        st({ ragQ: q, ragAnswer: a.withMemory });
+        load(DEMO_T);
+      } },
+    { title: "It won't make things up", dwell: 4800,
+      caption: 'Ask for something the itinerary does not contain.',
+      run: async () => {
+        st({ wifiAnswer: (await api.answer(DEMO_T, 'What is the wifi password at my Tokyo hotel?', chatModel)).withMemory });
+      } },
+    { title: 'Plans change', dwell: 4200,
+      caption: 'Two conflicting facts are now in memory. The sleep cycle will reconcile them.',
+      run: async () => {
+        const v1 = 'Book the client dinner for July 16 at 7pm';
+        const v2 = 'Update: the client moved our dinner to July 17 at 8pm';
+        await api.teach(DEMO_T, v1);
+        st({ dinner: { v1, v2: '' } });
+        await pause(700);
+        await api.teach(DEMO_T, v2);
+        st({ dinner: { v1, v2 } });
+      } },
+    { title: '💤 The dream', dwell: 6500,
+      caption: 'While idle, Engram sleeps: it consolidates episodes into durable notes, grows the knowledge graph, forgets weeks of idle chatter, and reconciles the dinner change.',
+      run: async () => {
+        await api.seedDemo(DEMO_T, 'trivia'); // aged small talk, for the forget sweep
+        st({ dreaming: true });
+        await api.sleep(DEMO_T);
+        const cs = await api.cycles(DEMO_T);
+        setCycles(cs.cycles);
+        st({ dreaming: false, dreamStats: (cs.cycles[0]?.stats ?? {}) as Record<string, number>, dreamCycle: cs.cycles[0] ?? null });
+        load(DEMO_T);
+      } },
+    { title: 'Recall the current truth', dwell: 5000,
+      caption: 'The update wins. The original 7pm is archived, not erased — history survives.',
+      run: async () => {
+        st({ updatedReply: (await api.chat(DEMO_T, "Remind me — when's my client dinner?", [], chatModel)).reply });
+      } },
+    { title: 'It digs when it must', dwell: 5500,
+      caption: 'The forgotten chatter is gone from active recall — so when asked directly, the memory searches its own cold tier. Agentic, not a toggle.',
+      run: async () => {
+        const r = await api.chat(DEMO_T, 'Did I ever mention coffee at some point?', [], chatModel);
+        st({ coffee: { reply: r.reply, deepened: r.deepened ?? false } });
+      } },
+    { title: 'Proof, not vibes', dwell: 9000,
+      caption: '12 eval gates, three times on real Qwen — and accuracy that holds as sessions accumulate while a memoryless baseline decays.',
+      run: async () => {
+        // Curve from the eval report (detail.learningCurve), gate-value fallback.
+        let curve: StageData['curve'] = null;
+        const rep = evals as (EvalReport & { detail?: { learningCurve?: { memory: number[]; baseline: number[] } } }) | null;
+        if (rep?.detail?.learningCurve?.memory?.length) curve = rep.detail.learningCurve;
+        else {
+          const g = rep?.gates?.find((x) => x.name.toLowerCase().includes('learning'));
+          const m = g?.value.match(/memory ([\d.→]+)% vs baseline ([\d.→]+)%/);
+          if (m) curve = { memory: m[1]!.split('→').map(Number), baseline: m[2]!.split('→').map(Number) };
+        }
+        const blocks = await api.core(DEMO_T).catch(() => ({ blocks: [] as CoreBlock[] }));
+        st({ curve, profileText: blocks.blocks.find((b) => b.label === 'profile')?.body ?? '' });
+      } },
   ];
 
-  // Chat-native version of the demo: plays the same Tokyo story as a real
-  // conversation in the 💬 Chat view, hopping to the 🧠 Brain view for the visual
-  // payoffs (the dream graph + trace, and forgetting/deep-recall).
-  const demoActsChat: DemoAct[] = [
-    { title: 'Fresh start', run: async (say) => {
-      setView('chat'); await api.seedDemo(DEMO_T, 'reset');
-      setChatRecalled([]); load(DEMO_T);
-      setChatMsgs([{ role: 'system', content: '👋 Meet Alex, planning a work trip to Tokyo. Every message Alex sends becomes memory — watch the assistant learn.' }]);
-      say('A clean slate on tenant "demo". The whole story plays out as a real conversation.');
-    } },
-    { title: 'Alex introduces himself', run: async (say) => {
-      say('Alex shares a few durable facts — these get captured as memories.');
-      await demoPushUser("Hey! A few things about me: I'm allergic to peanuts, I'm vegetarian, and I always book a window seat when I fly.");
-    } },
-    { title: 'Memory personalizes', run: async (say) => {
-      say('Ask it to use what it now knows. (A model with NO memory would draw a total blank here.)');
-      await demoPushUser('Keep that in mind when you help me plan meals on my trip, ok?');
-    } },
-    { title: 'Upload a document (RAG)', run: async (say) => {
-      demoSystem('📎 Alex uploads his Tokyo itinerary (a real PDF).');
-      const file = await fetchDemoPdf();
-      const up = await api.uploadDoc(DEMO_T, file); load(DEMO_T);
-      demoSystem(`📄 ingested ${up.filename} — ${up.chunks} chunks embedded into memory.`);
-      say('Now ask it something only the document knows.');
-      await demoPushUser('From my itinerary — what is my hotel confirmation number and how many bags can I check?');
-    } },
-    { title: 'No confabulation', run: async (say) => {
-      say('Ask something the itinerary does NOT contain.');
-      await demoPushUser("What's the wifi password at my Tokyo hotel?");
-    } },
-    { title: 'A plan that changes', run: async (say) => {
-      await demoPushUser('Book my client dinner for July 16 at 7pm.');
-      say('…then it changes.');
-      await demoPushUser('Actually, the client moved our dinner to July 17 at 8pm.');
-    } },
-    { title: '💤 Dream — watch the Brain', run: async (say) => {
-      demoSystem('💤 Engram sleeps — consolidating the conversation into durable memory, growing the graph, forgetting the noise, reconciling the dinner change.');
-      await api.seedDemo(DEMO_T, 'trivia'); // aged small-talk for the forget sweep to demote
-      setView('brain');
-      await api.sleep(DEMO_T);
-      const cs = await api.cycles(DEMO_T); setCycles(cs.cycles); setSelectedCycle(cs.cycles[0] ?? null);
-      load(DEMO_T); scrollToCard('card-sleep');
-      const s = (cs.cycles[0]?.stats ?? {}) as Record<string, number>;
-      say(`Now in the Brain view: +${s.consolidated ?? 0} notes · ${s.entitiesMerged ?? 0} neurons · −${s.forgotten ?? 0} trivia demoted. The step-by-step dream trace is open below.`);
-    } },
-    { title: 'Back to chat — recall the update', run: async (say) => {
-      setView('chat'); say('Back in the conversation. Ask about the dinner now — note it answers the NEW time.');
-      await demoPushUser("Remind me — when's my client dinner again?");
-    } },
-    { title: 'Forgetting is demotion (Brain)', run: async (say) => {
-      setView('brain'); setQuery('coffee'); setDeepRecall(false); scrollToCard('card-recall');
-      await runSearch({ q: 'coffee', deep: false });
-      say('Normal recall of Alex\'s old "coffee" small talk → nothing. It faded from active memory. Now flip on DEEP recall…');
-      setDeepRecall(true);
-      await runSearch({ q: 'coffee', deep: true }); scrollToCard('card-recall');
-      say('…still there. Engram demotes, it never deletes.');
-    } },
-    { title: 'What it learned', run: async (say) => {
-      setDeepRecall(false); load(DEMO_T); scrollToCard('card-profile');
-      say('The learned Profile (read first every turn) + the Proof panel — 12 eval gates, 3× on real Qwen. Now switch to 💬 Chat and keep talking to it yourself.');
-    } },
-  ];
-
-  const demoActs = demo.mode === 'chat' ? demoActsChat : demoActsPanel;
-
-  const startDemo = (mode: 'panel' | 'chat') => {
+  const startDemo = () => {
     setTenant(DEMO_T);
-    if (mode === 'chat') { setView('chat'); setChatMsgs([]); }
-    else setView('brain'); // the panel demo drives the sidebar/graph, which live in Brain view
-    setDemo({ active: true, running: false, idx: 0, auto: false, mode, step: 'Ready — click "Next ▶" to begin, or "Autoplay" for hands-free.', log: [] });
+    setStage({});
+    setDemo({ active: true, running: false, idx: 0, auto: false });
   };
 
   const runDemoStep = async (i: number) => {
     if (i >= demoActs.length) return;
-    setDemo((d) => ({ ...d, running: true }));
-    const say = (s: string) => setDemo((d) => ({ ...d, step: s, log: [...d.log, s].slice(-8) }));
+    setDemo((d) => ({ ...d, running: true, idx: i }));
     try {
-      await demoActs[i]!.run(say);
+      await demoActs[i]!.run();
     } catch (e) {
-      say(`⚠ ${e instanceof Error ? e.message : 'step failed'}`);
+      st({ error: e instanceof Error ? e.message : 'act failed' });
     }
     setDemo((d) => ({ ...d, running: false, idx: i + 1 }));
   };
 
-  // Autoplay driver: when enabled and idle, advance to the next act after a beat.
-  // Runs each step from a fresh render, so no stale-closure surprises.
+  // Autoplay: advance when idle, lingering for the finished act's dwell (read time).
   useEffect(() => {
     if (!demo.active || !demo.auto || demo.running || demo.idx >= demoActs.length) return;
-    const t = setTimeout(() => { void runDemoStep(demo.idx); }, demo.idx === 0 ? 900 : 7000);
+    const wait = demo.idx === 0 ? 600 : demoActs[demo.idx - 1]!.dwell;
+    const t = setTimeout(() => { void runDemoStep(demo.idx); }, wait);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [demo.active, demo.auto, demo.running, demo.idx]);
@@ -512,8 +460,8 @@ export function App() {
           <button className={view === 'brain' ? 'on' : ''} onClick={() => setView('brain')}>🧠 Brain</button>
           <button className={view === 'files' ? 'on' : ''} onClick={() => setView('files')}>🗂 Files</button>
         </div>
-        <button className="demo-btn" title="Guided visual demo — drives the graph, two-brains, and budgeter panels" onClick={() => startDemo('panel')}>
-          {demo.active ? '▶ demo open' : '▶ Demo (visual)'}
+        <button className="demo-btn" title="The guided demo — one full-screen story, ~2 minutes on Autoplay" onClick={startDemo}>
+          {demo.active ? '▶ demo open' : '▶ Demo'}
         </button>
         <div className="spacer" />
         <span className="muted">{stats ? `${stats.entities} neurons · ${stats.edges} synapses · ${stats.notes} notes` : '—'}</span>
@@ -522,9 +470,8 @@ export function App() {
         <div className="demobar">
           <div className="demoprogress">
             <span className="demono">{Math.min(demo.idx + 1, demoActs.length)}/{demoActs.length}</span>
-            <span className="demotitle">{demo.idx < demoActs.length ? demoActs[demo.idx]!.title : '✅ complete'}</span>
           </div>
-          <div className="demostep">{demo.step}</div>
+          <div className="demostep muted">step through it live, or Autoplay (~2 min) to record</div>
           <div className="democtrls">
             <button className="primary" disabled={demo.running || demo.idx >= demoActs.length} onClick={() => void runDemoStep(demo.idx)}>
               {demo.running ? '…running' : demo.idx >= demoActs.length ? 'done' : `Next ▶ ${demoActs[demo.idx]!.title}`}
@@ -532,8 +479,8 @@ export function App() {
             {demo.auto
               ? <button onClick={() => setDemo((d) => ({ ...d, auto: false }))}>⏸ Pause</button>
               : <button disabled={demo.idx >= demoActs.length} onClick={() => setDemo((d) => ({ ...d, auto: true }))}>▶ Autoplay</button>}
-            <button disabled={demo.running} onClick={() => setDemo((d) => ({ ...d, idx: 0, auto: false, log: [], step: 'Restarted — click Next ▶.' }))}>↺ Restart</button>
-            <button onClick={() => setDemo((d) => ({ ...d, active: false, running: false, idx: 0, auto: false, step: '', log: [] }))}>✕ Exit</button>
+            <button disabled={demo.running} onClick={() => { setStage({}); setDemo((d) => ({ ...d, idx: 0, auto: false })); }}>↺ Restart</button>
+            <button onClick={() => { setDemo({ active: false, running: false, idx: 0, auto: false }); setStage({}); }}>✕ Exit</button>
           </div>
         </div>
       )}
@@ -697,7 +644,151 @@ export function App() {
           </div>
         )}
 
-        {view === 'chat' ? (
+        {demo.active ? (
+          <div className="stagewrap">
+            <div className="stagerail">
+              {demoActs.map((a, i) => (
+                <div key={a.title} className={`railstep ${i < demo.idx ? 'done' : i === demo.idx || (demo.running && i === demo.idx) ? 'now' : ''}`}>
+                  <span className="raildot">{i < demo.idx ? '✓' : i + 1}</span>
+                  <span className="railtitle">{a.title}</span>
+                </div>
+              ))}
+            </div>
+            <div className="stagebody">
+              {(() => {
+                // While an act runs, show ITS content (idx points at the running act);
+                // once finished idx advances, so show the act that just completed.
+                const cur = Math.min(demo.running ? demo.idx : Math.max(0, demo.idx - 1), demoActs.length - 1);
+                const act = demoActs[cur]!;
+                const started = demo.idx > 0 || demo.running;
+                return (
+                  <>
+                    <div className="stagehead">
+                      <h1>{started ? act.title : 'engram'}</h1>
+                      <p className="stagecaption">{started ? act.caption : 'A self-managing memory layer for AI agents — built on Qwen. Click Next ▶ or Autoplay.'}</p>
+                    </div>
+                    {stage.error && <div className="stageerr">⚠ {stage.error} — click Next ▶ to continue or ↺ Restart.</div>}
+                    {started && cur === 0 && (
+                      <div className="stagecard herocard">
+                        <div className="heroline">🧳 <b>Alex Chen</b> · Tokyo work trip · 15–19 July 2026</div>
+                        <div className="heroline muted">capture fast → dream while idle → recall what matters</div>
+                      </div>
+                    )}
+                    {cur === 1 && (
+                      <div className="stagecol">
+                        {(stage.taught ?? []).map((f) => <div key={f} className="bubble user stagein">{f}</div>)}
+                        {demo.running && <div className="muted stagewait">writing to memory…</div>}
+                      </div>
+                    )}
+                    {cur === 2 && (
+                      demo.running ? <div className="stagewait">asking both brains…</div> : stage.brains && (
+                        <div className="stagebrains">
+                          <div className="brain with big">
+                            <div className="blabel">🧠 with Engram memory</div>
+                            <div className="btext">{stage.brains.withMemory}</div>
+                          </div>
+                          <div className="brain without big">
+                            <div className="blabel">🌫 no memory</div>
+                            <div className="btext">{stage.brains.withoutMemory}</div>
+                          </div>
+                        </div>
+                      )
+                    )}
+                    {cur === 3 && (
+                      <div className="stagecol">
+                        <a className="pdfchip" href="/tokyo-itinerary.pdf" target="_blank" rel="noreferrer" title="open the actual PDF in a new tab">
+                          📄 tokyo-itinerary.pdf {stage.ragChunks ? <span className="pill">{stage.ragChunks} chunks embedded</span> : <span className="pill">uploading…</span>} <span className="muted">↗ click to open</span>
+                        </a>
+                        {stage.ragQ && <div className="bubble user stagein">{stage.ragQ}</div>}
+                        {demo.running && !stage.ragAnswer && <div className="stagewait">reading the document…</div>}
+                        {stage.ragAnswer && <div className="bubble assistant stagein big">{stage.ragAnswer}</div>}
+                      </div>
+                    )}
+                    {cur === 4 && (
+                      <div className="stagecol">
+                        <div className="bubble user stagein">What is the wifi password at my Tokyo hotel?</div>
+                        {demo.running ? <div className="stagewait">…</div> : stage.wifiAnswer && (
+                          <>
+                            <div className="bubble assistant stagein big">{stage.wifiAnswer}</div>
+                            <div className="stagebadge">✅ no confabulation — it never invents what it was never told</div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {cur === 5 && stage.dinner && (
+                      <div className="stagecol">
+                        <div className="bubble user stagein">{stage.dinner.v1}</div>
+                        {stage.dinner.v2 && <div className="conflictmark">⚡ the plan changes</div>}
+                        {stage.dinner.v2 && <div className="bubble user stagein hot">{stage.dinner.v2}</div>}
+                      </div>
+                    )}
+                    {cur === 6 && (
+                      stage.dreaming || demo.running ? (
+                        <div className="dreamingstage">
+                          <div className="dreamglyphs">
+                            {['① forget', '② cluster', '③ consolidate', '④ graph', '⑤ reconcile', '⑥ synthesize', '⑦ profile'].map((s, i) => (
+                              <span key={s} className="dreampulse" style={{ animationDelay: `${i * 0.35}s` }}>{s}</span>
+                            ))}
+                          </div>
+                          <div className="stagewait">💤 dreaming on real Qwen…</div>
+                        </div>
+                      ) : stage.dreamStats && (
+                        <div className="stagecol">
+                          <div className="dreamstats">
+                            <span>+{stage.dreamStats.consolidated ?? 0} durable notes</span>
+                            <span>{stage.dreamStats.entitiesMerged ?? 0} neurons</span>
+                            <span className="hotstat">−{stage.dreamStats.forgotten ?? 0} trivia demoted</span>
+                            <span>{stage.dreamStats.connectionsSynthesized ?? 0} new links</span>
+                          </div>
+                          {stage.dreamCycle && <div className="stagetrace"><CycleDetail cycle={stage.dreamCycle} /></div>}
+                        </div>
+                      )
+                    )}
+                    {cur === 7 && (
+                      <div className="stagecol">
+                        <div className="bubble user stagein">Remind me — when's my client dinner?</div>
+                        {demo.running ? <div className="stagewait">…</div> : stage.updatedReply && (
+                          <>
+                            <div className="bubble assistant stagein big">{stage.updatedReply}</div>
+                            <div className="stagebadge">🕰 bi-temporal: the old 7pm is archived, not erased</div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {cur === 8 && (
+                      <div className="stagecol">
+                        <div className="bubble user stagein">Did I ever mention coffee at some point?</div>
+                        {demo.running ? <div className="stagewait">searching… active recall is empty, digging into the cold tier</div> : stage.coffee && (
+                          <>
+                            <div className="bubble assistant stagein big">{stage.coffee.reply}</div>
+                            {stage.coffee.deepened && <div className="stagebadge deepbadge">⛏ dug deep — the memory searched its own cold tier, unprompted</div>}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {cur === 9 && !demo.running && (
+                      <div className="stagecol">
+                        {stage.curve && <CurveChart curve={stage.curve} />}
+                        {evals?.gates && (
+                          <div className="stagegates">
+                            {evals.gates.map((g) => (
+                              <span key={g.name} className={`gatechip ${g.pass ? 'pass' : 'fail'}`} title={`${g.name}: ${g.value}`}>{g.pass ? '✅' : '❌'}</span>
+                            ))}
+                            <span className="muted">{evals.gates.filter((g) => g.pass).length}/{evals.gates.length} gates · {evals.runs}× real Qwen</span>
+                          </div>
+                        )}
+                        {stage.profileText && (
+                          <div className="stageprofile"><b>what it learned about Alex</b><br />{stage.profileText}</div>
+                        )}
+                        <div className="stageclose">Try it yourself — ✕ Exit and just chat. <span className="muted">Memory persists; the transcript is only a view.</span></div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        ) : view === 'chat' ? (
           <div className="chatpane">
             <div className="chathead">
               <span className="muted">💬 <b>{tenant || '—'}</b> · the transcript is just a view — memory lives in Engram</span>
@@ -723,7 +814,7 @@ export function App() {
                   via Engram, not a giant prompt. Switch to 🧠 <b>Brain</b> and hit 💤 <b>Dream</b> to watch what you
                   taught consolidate into the graph. Use <b>＋ new</b> up top for a clean session.
                   <div style={{ textAlign: 'center', marginTop: 20 }}>
-                    <button className="demo-btn" onClick={() => startDemo('chat')}>▶ Play the demo as a conversation</button>
+                    <button className="demo-btn" onClick={startDemo}>▶ Play the guided demo</button>
                   </div>
                 </div>
               )}
@@ -740,7 +831,7 @@ export function App() {
               </div>
             )}
             <div className="chatinput">
-              <button className="attach" title="play the guided demo as a conversation" disabled={demo.active} onClick={() => startDemo('chat')}>▶</button>
+              <button className="attach" title="play the guided demo" disabled={demo.active} onClick={startDemo}>▶</button>
               <button className="attach" title="upload a file (PDF, txt, md)" disabled={!tenant} onClick={() => chatFileRef.current?.click()}>📎</button>
               <input ref={chatFileRef} type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
                 style={{ display: 'none' }} onChange={(e) => onChatUpload(e.target.files?.[0])} />
@@ -791,6 +882,42 @@ export function App() {
           </div>
         </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The learning-curve chart: per-session answer accuracy, memory agent vs a
+ * no-memory baseline (context window = current session only). SVG, no deps.
+ */
+function CurveChart({ curve }: { curve: { memory: number[]; baseline: number[] } }) {
+  const n = curve.memory.length;
+  const W = 460; const H = 190; const padL = 34; const padB = 26; const padT = 14;
+  const x = (i: number) => padL + (i * (W - padL - 12)) / Math.max(1, n - 1);
+  const y = (v: number) => padT + (1 - v / 100) * (H - padT - padB);
+  const path = (vals: number[]) => vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(v)}`).join(' ');
+  return (
+    <div className="curvechart">
+      <div className="curvetitle">answer accuracy on everything learned so far, per session</div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%">
+        {[0, 50, 100].map((v) => (
+          <g key={v}>
+            <line x1={padL} x2={W - 8} y1={y(v)} y2={y(v)} stroke="rgba(148,163,184,0.15)" />
+            <text x={padL - 6} y={y(v) + 3} fontSize="9" fill="#64748b" textAnchor="end">{v}%</text>
+          </g>
+        ))}
+        <path d={path(curve.baseline)} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="5 4" />
+        <path d={path(curve.memory)} fill="none" stroke="#2dd4bf" strokeWidth="3" />
+        {curve.memory.map((v, i) => <circle key={`m${i}`} cx={x(i)} cy={y(v)} r="4" fill="#2dd4bf" />)}
+        {curve.baseline.map((v, i) => <circle key={`b${i}`} cx={x(i)} cy={y(v)} r="3.5" fill="#64748b" />)}
+        {curve.memory.map((_, i) => (
+          <text key={`s${i}`} x={x(i)} y={H - 8} fontSize="9" fill="#94a3b8" textAnchor="middle">session {i + 1}</text>
+        ))}
+      </svg>
+      <div className="curvelegend">
+        <span><i className="lm" /> with Engram memory</span>
+        <span><i className="lb" /> no-memory baseline</span>
       </div>
     </div>
   );

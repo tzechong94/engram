@@ -19,14 +19,16 @@ is the vehicle that shows it off.
 pnpm --filter @engram/viewer start # brain viewer → http://localhost:8080
 ```
 
-Hit **▶ Demo** and step through it (or **Autoplay**), an 11-act story on one persona, Alex
-planning a Tokyo trip: teach facts → **Ask both brains** (memory vs no-memory) → upload a **PDF
-itinerary** and answer from it (and say *I don't know* when it can't) → change a fact → 💤 **Dream**
-(consolidate, grow the graph, forget the trivia, reconcile the update) → recall the new value →
-recall under a tight context budget → then show forgetting is **demotion, not deletion** (a faded
-memory reappears under **deep recall**). Each act narrates itself and scrolls the right panel in.
+Hit **▶ Demo**: a 10-act story on one full-screen stage (step through it, or **Autoplay** runs the
+whole thing in ~2 minutes, live on real Qwen). One persona, Alex planning a Tokyo trip: teach
+facts → the same question **with memory vs without** → upload a real **PDF itinerary** (clickable)
+and answer from it, and say *I don't know* when it can't → change a plan → 💤 **Dream**
+(consolidate, grow the graph, forget weeks of chatter, reconcile the change) → recall the current
+truth → ask about the forgotten chatter and watch the memory **dig into its own cold tier,
+unprompted** → close on the **learning-curve chart**: accuracy holds at 100% across sessions while
+a no-memory baseline decays to 25%.
 
-**Proof**: the memory layer passes an **12-gate eval, 3× on real Qwen, all green**: recall,
+**Proof**: the memory layer passes a **12-gate eval, 3× on real Qwen, all green**: recall,
 *timely forgetting*, *limited-context recall*, contradiction/update resolution, RAG retrieval +
 answer, no-confabulation, ~200 ms p95. The numbers show live in the viewer's **Proof** panel, or:
 
