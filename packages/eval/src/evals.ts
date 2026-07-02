@@ -36,6 +36,7 @@ import {
   RAG_DOC,
   RAG_QUERIES,
   RAG_NEGATIVE,
+  LEARNING_SESSIONS,
   type RecallQuery,
 } from './scenario.js';
 
@@ -74,6 +75,13 @@ async function judgeAnswer(qwen: QwenClient, query: string, memories: string[], 
     { tier: 'max' },
   );
   const answer = ans.text.trim();
+  // "I don't know" is graded deterministically — the LLM judge is unreliable on
+  // this exact case (it tends to accept IDK even against a concrete EXPECTED).
+  // IDK is correct iff the ground truth itself says the info is unknown.
+  if (/^i\s*don'?t\s*know\b/i.test(answer)) {
+    const expectsUnknown = /unknown|never mentioned|does not contain|no such/i.test(expected);
+    return { answer, correct: expectsUnknown };
+  }
   const judge = await qwen.chat(
     [
       { role: 'system', content: 'Grade whether ANSWER matches EXPECTED for the question. Reply STRICT JSON {"correct": boolean}. "I don\'t know" counts as correct ONLY if EXPECTED says the info is unknown/never mentioned.' },
@@ -217,6 +225,34 @@ async function runOnce(
     answerScore = pct(allJ.filter(Boolean).length, allJ.length);
   }
 
+  // Cross-session learning curve ("increasingly accurate decisions"): simulate N
+  // sessions on a FRESH tenant; after each, quiz on all facts so far. Memory agent
+  // answers from Engram recall; the baseline only sees the current session (a
+  // context window with no persistent memory).
+  const curve: { memory: number[]; baseline: number[] } = { memory: [], baseline: [] };
+  let learnFinalMem = -1;
+  let learnFinalBase = -1;
+  if (real) {
+    const lcTenant = `evals-lc-${crypto.randomUUID()}`;
+    for (let s = 0; s < LEARNING_SESSIONS.length; s++) {
+      await memory.write({ tenantId: lcTenant, content: LEARNING_SESSIONS[s]!.fact, sourceChannel: `session-${s + 1}` });
+      const panel = LEARNING_SESSIONS.slice(0, s + 1);
+      let memOk = 0;
+      let baseOk = 0;
+      for (const q of panel) {
+        const r = await recall(memory, lcTenant, q.query, 1500);
+        if ((await judgeAnswer(qwen, q.query, r.contents, q.answer)).correct) memOk++;
+        // Baseline context = current session's fact only.
+        if ((await judgeAnswer(qwen, q.query, [LEARNING_SESSIONS[s]!.fact], q.answer)).correct) baseOk++;
+      }
+      curve.memory.push(pct(memOk, panel.length));
+      curve.baseline.push(pct(baseOk, panel.length));
+    }
+    learnFinalMem = curve.memory[curve.memory.length - 1] ?? -1;
+    learnFinalBase = curve.baseline[curve.baseline.length - 1] ?? -1;
+    await memory.repository.resetTenant(lcTenant).catch(() => undefined);
+  }
+
   const latencyP95 = p95(lat);
   const consolidated = (sleepReport.stats as { consolidated?: number }).consolidated ?? 0;
 
@@ -248,6 +284,16 @@ async function runOnce(
       enforced: real,
     },
     { name: 'Answer correctness (LLM-judged, all)', value: real ? `${answerScore}%` : 'skipped (mock)', pass: !real || answerScore >= 80, enforced: real },
+    {
+      name: 'Cross-session learning curve (memory vs no-memory baseline)',
+      value: real
+        ? `memory ${curve.memory.join('→')}% vs baseline ${curve.baseline.join('→')}%`
+        : 'skipped (mock)',
+      // Increasingly accurate: by the final session the memory agent still answers
+      // (nearly) everything accumulated, while a memoryless context has decayed.
+      pass: !real || (learnFinalMem >= 75 && learnFinalMem - learnFinalBase >= 25),
+      enforced: real,
+    },
   ];
 
   const report = {
@@ -258,7 +304,7 @@ async function runOnce(
     after,
     sleep: sleepReport.stats as unknown as Record<string, unknown>,
     gates,
-    detail: { contradictions: contraDetail, answers: answerDetail },
+    detail: { contradictions: contraDetail, answers: answerDetail, learningCurve: curve },
   };
   return { gates, report };
 }

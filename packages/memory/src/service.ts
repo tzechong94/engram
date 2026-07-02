@@ -8,11 +8,16 @@ import {
 import { MemoryRepo } from './repo.js';
 import { packContext, estimateTokens, type BudgeterCandidate, DEFAULT_WEIGHTS, type BudgeterWeights } from './budgeter.js';
 import { personalizedPageRank, normalizeScores } from './ppr.js';
+import { anchorRelativeDates } from './dates.js';
 
 const log = createLogger('memory');
 const DLQ_TOPIC = 'dead_letter';
 /** Below this edge count, PPR adds little over 1-hop expansion — use the fallback. */
 const PPR_MIN_EDGES = 2;
+/** autoDeepen: if no active-set candidate's relevance clears this bar, the search
+ *  escalates to the cold tier on its own. Real embeddings put unrelated content
+ *  around 0.15–0.35 and genuine matches above 0.5. */
+const DEEPEN_RELEVANCE_BAR = 0.45;
 
 export interface WriteResult {
   id: string;
@@ -64,7 +69,9 @@ export class MemoryService {
     importance?: number;
   }): Promise<WriteResult> {
     const tenantId = args.tenantId;
-    const content = args.content.trim();
+    // Anchor relative dates at capture time ("tomorrow at 6pm" gains an absolute
+    // [tomorrow = YYYY-MM-DD] suffix) so the memory can't rot as days pass.
+    const content = anchorRelativeDates(args.content.trim());
     if (!content) throw new Error('memory.write: content is empty');
     await this.repo.ensureTenant(tenantId);
 
@@ -191,11 +198,17 @@ export class MemoryService {
     /** Deep recall also reaches the cold tier (forgotten/archived episodes) —
      *  decay demotes memories, it doesn't delete them. Default recall stays lean. */
     deep?: boolean;
+    /** Agentic escalation: when active-set recall is weak (nothing relevant found),
+     *  automatically retry against the cold tier and merge — "I can't recall it off
+     *  the cuff, let me dig". Off by default so plain search/evals stay strictly
+     *  tiered; the conversational agent paths turn it on. */
+    autoDeepen?: boolean;
   }): Promise<SearchResult> {
     const { tenantId, query } = args;
     const tokenBudget = args.tokenBudget ?? 1500;
     const k = args.k ?? 20;
     const deep = args.deep ?? false;
+    const autoDeepen = (args.autoDeepen ?? false) && !deep;
 
     let queryEmbedding: number[] | null = null;
     try {
@@ -299,8 +312,8 @@ export class MemoryService {
       relevance: 1, recency: 1, importance: 1, diversity: 1, score: 1, included: true,
     }));
 
-    const candidates = [...byId.values()];
-    if (candidates.length === 0) {
+    let candidates = [...byId.values()];
+    if (candidates.length === 0 && !autoDeepen) {
       return {
         memories: coreMemories,
         trace: { tokenBudget, tokensUsed: coreTokens, weights: this.weights, candidates: coreTrace },
@@ -308,14 +321,51 @@ export class MemoryService {
     }
 
     // Rerank to sharpen relevance (blend rerank score with recall relevance).
-    try {
-      const ranked = await this.qwen.rerank(query, candidates.map((c) => c.content));
-      for (const { index, score } of ranked) {
-        const c = candidates[index];
-        if (c) c.relevance = 0.5 * c.relevance + 0.5 * score;
+    if (candidates.length > 0) {
+      try {
+        const ranked = await this.qwen.rerank(query, candidates.map((c) => c.content));
+        for (const { index, score } of ranked) {
+          const c = candidates[index];
+          if (c) c.relevance = 0.5 * c.relevance + 0.5 * score;
+        }
+      } catch (err) {
+        log.warn('rerank failed; using recall relevance only', { err: String(err) });
       }
-    } catch (err) {
-      log.warn('rerank failed; using recall relevance only', { err: String(err) });
+    }
+
+    // Agentic deep-recall escalation: if nothing in the active set clears the
+    // relevance bar, the memory itself decides to dig into the cold tier
+    // (forgotten/archived) and merge whatever it finds — the budgeter still ranks.
+    // Echoes of past *questions* (chat captures them) don't count as evidence that
+    // we know something — "did I mention coffee?" matching last week's identical
+    // question at relevance 1.0 must not suppress the dig.
+    let deepened = false;
+    const qNorm = query.trim().toLowerCase();
+    const maxRel = candidates.reduce((m, c) => {
+      const t = c.content.trim().toLowerCase();
+      if (t === qNorm || t.endsWith('?')) return m;
+      return Math.max(m, c.relevance);
+    }, 0);
+    if (autoDeepen && maxRel < DEEPEN_RELEVANCE_BAR) {
+      if (queryEmbedding) {
+        for (const r of await this.repo.vectorSearchEpisodes(tenantId, queryEmbedding, k, true)) {
+          add('episode', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
+        }
+      }
+      for (const r of await this.repo.keywordSearchEpisodes(tenantId, query, k, true)) {
+        add('episode', r.id, r.content, r.relevance, r.createdAt, r.importance, r.embedding);
+      }
+      if (byId.size > candidates.length) {
+        deepened = true;
+        candidates = [...byId.values()];
+        log.info('memory.search auto-deepened', { tenantId, maxRel: maxRel.toFixed(2), widened: candidates.length });
+      }
+    }
+    if (candidates.length === 0) {
+      return {
+        memories: coreMemories,
+        trace: { tokenBudget, tokensUsed: coreTokens, weights: this.weights, candidates: coreTrace },
+      };
     }
 
     const trace = packContext(candidates, {
@@ -339,6 +389,7 @@ export class MemoryService {
         tokensUsed: trace.tokensUsed + coreTokens,
         weights: trace.weights,
         candidates: [...coreTrace, ...trace.candidates],
+        ...(deepened ? { deepened: true } : {}),
       },
     };
   }

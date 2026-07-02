@@ -166,6 +166,28 @@ export const RAG_NEGATIVE: RecallQuery = {
 };
 
 /**
+ * Cross-session learning curve ("makes increasingly accurate decisions"): N
+ * simulated sessions, one durable fact each. At the END of each session the
+ * agent is quizzed on ALL facts accumulated so far.
+ *  - memory agent: answers from Engram recall → coverage stays high as sessions grow
+ *  - no-memory baseline: sees only the CURRENT session's messages (a context
+ *    window without persistent memory) → accuracy decays as 1/k
+ * The gap widening with experience is the measurable form of the track's
+ * "increasingly accurate across multi-turn, cross-session interactions".
+ */
+export interface LearningSession {
+  fact: string;
+  query: string;
+  answer: string;
+}
+export const LEARNING_SESSIONS: LearningSession[] = [
+  { fact: 'My cat is called Miso', query: "what is my cat's name", answer: 'Miso' },
+  { fact: 'I work at Nimbus Robotics as a controls engineer', query: 'where do I work and what is my role', answer: 'controls engineer at Nimbus Robotics' },
+  { fact: 'My favourite dish is laksa', query: 'what is my favourite dish', answer: 'laksa' },
+  { fact: 'My apartment door code is 4417', query: 'what is my apartment door code', answer: '4417' },
+];
+
+/**
  * Precision / no-confabulation: the user never said any of these. Recall should
  * surface nothing strongly relevant, and a downstream answer should be "I don't
  * know" — not a fabricated fact. `expectNone` are the trap tokens.

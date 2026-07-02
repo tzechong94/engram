@@ -134,6 +134,9 @@ export interface PackingTrace {
   tokensUsed: number;
   weights: { relevance: number; recency: number; importance: number; diversity: number };
   candidates: PackCandidate[];
+  /** True when active-set recall came up empty and the search auto-escalated to
+   *  the cold tier (forgotten/archived) — the agentic "let me dig deeper" path. */
+  deepened?: boolean;
 }
 
 export interface SearchResult {

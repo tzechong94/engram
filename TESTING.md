@@ -33,8 +33,14 @@ Exits non-zero if any enforced gate fails. Writes `packages/eval/out/evals.{json
 | 9 | Consolidation (notes created) | ≥ 1 |
 | 10 | Contradiction/update resolution | ≥ 75% (real only) |
 | 11 | Answer correctness (LLM-judged, all) | ≥ 80% (real only) |
+| 12 | Cross-session learning curve (memory vs no-memory baseline) | final-session memory ≥ 75% and ≥ 25pts above baseline (real only) |
 
 `EVAL_RUNS=3` runs the suite 3× and a gate must hold in ≥⅔ of runs (`EVAL_PASS_RATE`), robust to LLM variance.
+
+Gate 12 is the track's "increasingly accurate decisions" made measurable: 4 simulated
+sessions each teach a fact, and after every session the agent is quizzed on ALL facts so
+far. The memory agent holds ~100% as knowledge accumulates while a no-memory baseline
+(context window = current session only) decays toward 1/k (measured: 100→50→33→25%).
 
 The headline before/after-sleep report is the separate `pnpm --filter @engram/eval start`.
 

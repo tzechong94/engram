@@ -237,7 +237,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const q = url.searchParams.get('q') || '';
       if (!q) return json(res, { error: 'q required' }, 400);
       const model = pickModel(url.searchParams.get('model'));
-      const recall = await memory.search({ tenantId: tenant, query: q, tokenBudget: 1200 });
+      const recall = await memory.search({ tenantId: tenant, query: q, tokenBudget: 1200, autoDeepen: true });
       const today = new Date().toISOString().slice(0, 10);
       const memBlock = recall.memories
         .map((m) => (m.recordedAt ? `- (recorded ${m.recordedAt.slice(0, 10)}) ${m.content}` : `- ${m.content}`))
@@ -283,7 +283,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       if (!message) return json(res, { error: 'message required' }, 400);
       await repo.ensureTenant(tenant);
       // Recall BEFORE writing so the reply uses prior memory, not the current turn.
-      const recall = await memory.search({ tenantId: tenant, query: message, tokenBudget: 1500 });
+      // autoDeepen: if active recall comes up weak, the memory digs into the cold
+      // tier on its own — agentic escalation, not a manual toggle.
+      const recall = await memory.search({ tenantId: tenant, query: message, tokenBudget: 1500, autoDeepen: true });
       const today = new Date().toISOString().slice(0, 10);
       const memBlock = recall.memories
         .map((m) => (m.recordedAt ? `- (recorded ${m.recordedAt.slice(0, 10)}) ${m.content}` : `- ${m.content}`))
@@ -302,8 +304,13 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       const r = await qwen.chat(msgs, { tier: 'max', model });
       // Capture the user's message as a durable memory for future turns.
       const wrote = await memory.write({ tenantId: tenant, content: message, sourceChannel: 'viewer-chat' });
-      log.info('viewer chat', { tenant, wroteId: wrote.id, recalled: recall.memories.length });
-      return json(res, { reply: r.text.trim(), recalled: recall.memories.map((m) => m.content), wroteId: wrote.id });
+      log.info('viewer chat', { tenant, wroteId: wrote.id, recalled: recall.memories.length, deepened: recall.trace.deepened ?? false });
+      return json(res, {
+        reply: r.text.trim(),
+        recalled: recall.memories.map((m) => m.content),
+        wroteId: wrote.id,
+        deepened: recall.trace.deepened ?? false,
+      });
     }
     case 'evals': {
       // Proof panel: serve the latest eval gate results (packages/eval/out/evals.json).

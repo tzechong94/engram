@@ -26,7 +26,7 @@ itinerary** and answer from it (and say *I don't know* when it can't) → change
 recall under a tight context budget → then show forgetting is **demotion, not deletion** (a faded
 memory reappears under **deep recall**). Each act narrates itself and scrolls the right panel in.
 
-**Proof**: the memory layer passes an **11-gate eval, 3× on real Qwen, all green**: recall,
+**Proof**: the memory layer passes an **12-gate eval, 3× on real Qwen, all green**: recall,
 *timely forgetting*, *limited-context recall*, contradiction/update resolution, RAG retrieval +
 answer, no-confabulation, ~200 ms p95. The numbers show live in the viewer's **Proof** panel, or:
 
@@ -108,7 +108,7 @@ flowchart TB
  end
 
  VIEWER["🧠 Viewer · graph · dream trace · two-brains · proof"]
- EVAL["✅ Eval · 11-gate suite · 3× real Qwen"]
+ EVAL["✅ Eval · 12-gate suite · 3× real Qwen"]
 
  User <--> ADAPT
  RUNNER <-->|reason| QWEN
@@ -148,6 +148,11 @@ On every inbound message:
  access_count += 1`, so the same fact twice just bumps access instead of duplicating.
 4. **Never drop a write**, if embedding fails, the episode is stored with a NULL vector and a
  `reembed` job goes to a dead-letter queue; `drainReembedQueue()` repairs it later.
+5. **Date anchoring** (`dates.ts:anchorRelativeDates`): relative dates are resolved at capture
+ time, so "my flight is tomorrow at 6pm" is stored as
+ `…tomorrow at 6pm [tomorrow = 2026-07-03]` and can't rot as days pass. Deterministic
+ (no LLM), conservative (skips "every Tuesday", bare weekdays), and append-only (the
+ original wording is preserved).
 
 Stored per episode: `content`, `embedding`, `source_channel`, `importance`, `content_hash`,
 `created_at`, `last_accessed_at`, `access_count`, `status`.
@@ -172,6 +177,12 @@ The query is embedded once, then four sources feed one candidate pool:
 By default recall sees only the **hot (active) set**. Pass `deep` and it also searches the **cold
 tier**, memories the forget sweep demoted (§3) are retained, not deleted, so an explicit deep
 recall still finds them (the viewer's "deep recall" toggle).
+
+The agent paths also set `autoDeepen`: when nothing in the active set clears a relevance bar
+(0.45, ignoring echoes of past questions), the search **escalates to the cold tier on its own**
+and merges what it finds, so "did I ever mention coffee?" digs up the demoted small talk
+without a human flipping a switch. The trace marks it `deepened` and the chat shows a
+"⛏ dug deep" pill.
 
 Then **rerank** (`gte-rerank`) sharpens relevance, blended `relevance = 0.5·recall +
 0.5·rerank` (`service.ts:311`), and the **token budgeter** (`budgeter.ts:packContext`) packs
@@ -250,11 +261,15 @@ surfaces (via vector + keyword), or the agent says "I don't know" if it isn't th
 > day-to-day memories so it never "forgets" your documents.*
 
 ### 7. Why trust it: the eval (`packages/eval`)
-Every claim above is held to an **11-gate suite, run 3× on real Qwen, all green**: recall
+Every claim above is held to a **12-gate suite, run 3× on real Qwen, all green**: recall
 retention, cross-channel recall, forget precision, limited-context precision, RAG retrieval,
 RAG answer correctness (incl. dates + "I don't know"), no-confabulation, contradiction/update
-resolution, LLM-judged answer correctness, consolidation, and ~200 ms p95 latency. It exits non-zero if any gate fails, and the numbers render live in the
-viewer's **Proof** panel.
+resolution, LLM-judged answer correctness, consolidation, ~200 ms p95 latency, and a
+**cross-session learning curve**: 4 simulated sessions each teach a fact, and after every
+session the agent is quizzed on everything so far. Memory holds **100→100→100→100%** while a
+no-memory baseline (context window = current session only) decays **100→50→33→25%**, the
+track's "increasingly accurate decisions" made measurable. It exits non-zero if any gate
+fails, and the numbers render live in the viewer's **Proof** panel.
 > *A report card the system must pass on every run, so "it works" is a number, not a vibe.*
 
 ## Research

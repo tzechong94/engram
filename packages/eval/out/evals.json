@@ -1,0 +1,154 @@
+{
+  "tenant": "evals-bcfa89fc-95c0-494b-8562-1e0d936840c7",
+  "mode": "real-qwen",
+  "generatedAt": "2026-07-02T02:19:32.442Z",
+  "before": {
+    "activeEpisodes": 21,
+    "notes": 1,
+    "entities": 0,
+    "edges": 0,
+    "forgotten": 0
+  },
+  "after": {
+    "activeEpisodes": 0,
+    "notes": 4,
+    "entities": 18,
+    "edges": 3,
+    "forgotten": 4
+  },
+  "sleep": {
+    "episodesScanned": 17,
+    "clusters": 2,
+    "consolidated": 2,
+    "entitiesMerged": 18,
+    "edgesMerged": 3,
+    "forgotten": 4,
+    "contradictionsResolved": 0,
+    "connectionsSynthesized": 1,
+    "tokensUsed": 2657,
+    "costCents": 0.5314,
+    "memoryOps": {
+      "add": 3,
+      "update": 0,
+      "delete": 0,
+      "noop": 0
+    }
+  },
+  "gates": [
+    {
+      "name": "Recall@k (retention)",
+      "value": "3/3 runs · last=100%",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Cross-channel recall",
+      "value": "3/3 runs · last=true",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Forget precision",
+      "value": "3/3 runs · last=100%",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Limited-context precision@k (120 tok)",
+      "value": "3/3 runs · last=100%",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "RAG retrieval (doc-only facts)",
+      "value": "3/3 runs · last=100%",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "RAG answer correctness (answers from doc, incl. date + \"I don't know\")",
+      "value": "3/3 runs · last=100% (answer)",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "No-confabulation (answers \"I don't know\")",
+      "value": "3/3 runs · last=100% (answer)",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Retrieval p95 latency",
+      "value": "3/3 runs · last=168.84 ms",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Consolidation (notes created)",
+      "value": "3/3 runs · last=2",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Contradiction/update resolution",
+      "value": "3/3 runs · last=100% (answer)",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Answer correctness (LLM-judged, all)",
+      "value": "3/3 runs · last=100%",
+      "pass": true,
+      "enforced": true
+    },
+    {
+      "name": "Cross-session learning curve (memory vs no-memory baseline)",
+      "value": "3/3 runs · last=memory 100→100→100→100% vs baseline 100→50→33.3→25%",
+      "pass": true,
+      "enforced": true
+    }
+  ],
+  "detail": {
+    "contradictions": [
+      "where do I live now: new=true oldGone=false",
+      "in which season is my wedding: new=true oldGone=false",
+      "what is my current phone number: new=true oldGone=false",
+      "which day do I go to the gym now: new=true oldGone=false"
+    ],
+    "answers": [
+      "✓ what do I like to do for fun on weekends → \"I like hiking, especially at Eagle Peak.\"",
+      "✓ what are my dietary preferences → \"I am vegetarian and prefer plant-based meals.\"",
+      "✓ tell me about my pet → \"You have a golden retriever named Rocky who loves the park.\"",
+      "✓ what is my job → \"I am a product designer at a startup.\"",
+      "✓ where do I live now → \"I live in San Francisco.\"",
+      "✓ in which season is my wedding → \"Your wedding is in autumn.\"",
+      "✓ what is my current phone number → \"Your current phone number is 555-9876.\"",
+      "✓ which day do I go to the gym now → \"I go to the gym on Thursdays now.\"",
+      "✓ what car do I drive → \"I don't know.\"",
+      "✓ what is my blood type → \"I don't know.\"",
+      "✓ how many siblings do I have → \"I don't know.\"",
+      "✓ what is the Zorblax reactor core temperature → \"The Zorblax reactor core temperature is 4271 kelvin.\"",
+      "✓ what is Project Nightingale's budget → \"Project Nightingale's budget is 3.2 million credits for fisc\"",
+      "✓ what gas does the Kelmari device run on → \"The Kelmari device runs exclusively on pressurized argon gas\"",
+      "✓ what is the lead cryptographer's secure extension → \"The lead cryptographer's secure extension is 5571.\"",
+      "✓ when and where is the Nightingale summit keynote → \"The Project Nightingale summit keynote is on 14 March 2031 a\"",
+      "✓ what is the mainframe root password in the briefing → \"I don't know\""
+    ],
+    "learningCurve": {
+      "memory": [
+        100,
+        100,
+        100,
+        100
+      ],
+      "baseline": [
+        100,
+        50,
+        33.3,
+        25
+      ]
+    }
+  },
+  "runs": 3,
+  "passRate": 0.67
+}

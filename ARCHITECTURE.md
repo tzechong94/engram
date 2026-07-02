@@ -35,7 +35,7 @@ flowchart TB
   end
 
   VIEWER["🧠 Viewer · graph · dream trace · two-brains · live proof"]
-  EVAL["✅ Eval · 11-gate suite · 3× real Qwen · all green"]
+  EVAL["✅ Eval · 12-gate suite · 3× real Qwen · all green"]
 
   User <--> ADAPT
   RUNNER <-->|reason| QWEN

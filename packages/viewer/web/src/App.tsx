@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { api, type GraphLink, type GraphNode, type SleepCycle, type SleepTraceEntry, type SearchResult, type Stats, type CoreBlock, type Note, type Episode, type AnswerResult, type EvalReport } from './api';
 
@@ -43,6 +43,7 @@ export function App() {
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatRecalled, setChatRecalled] = useState<string[]>([]);
+  const [chatDeepened, setChatDeepened] = useState(false);
   const [chatModel, setChatModel] = useState<string>(() => localStorage.getItem('engram-model') || 'qwen-max');
   const chatFileRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -108,6 +109,8 @@ export function App() {
         `${s.entitiesMerged ?? 0} neurons merged · −${s.forgotten ?? 0} forgotten`,
       );
       load(tenant);
+      // Pop the fresh dream's step-by-step trace in the drawer — no hunting for it.
+      api.cycles(tenant).then((cs) => { setCycles(cs.cycles); setSelectedCycle(cs.cycles[0] ?? null); }).catch(() => undefined);
     } catch (e) {
       setDreamMsg(`⚠ ${e instanceof Error ? e.message : 'sleep failed'}`);
     } finally {
@@ -174,6 +177,7 @@ export function App() {
       const r = await api.chat(tenant, text, history, chatModel);
       setChatMsgs((m) => [...m, { role: 'assistant', content: r.reply }]);
       setChatRecalled(r.recalled);
+      setChatDeepened(r.deepened ?? false);
       load(tenant); // refresh graph/stats so the Brain view reflects the new memory
     } catch (e) {
       setChatMsgs((m) => [...m, { role: 'assistant', content: `⚠ ${e instanceof Error ? e.message : 'chat failed'}` }]);
@@ -249,8 +253,10 @@ export function App() {
     return new File([blob], 'tokyo-itinerary.pdf', { type: 'application/pdf' });
   };
   // Bring the panel an act is driving into view, so nothing important needs manual
-  // scrolling during the demo. Small delay lets the new content render first.
+  // scrolling during the demo. Also asks a collapsed card to open itself first.
+  // Small delay lets the newly-opened content render before scrolling.
   const scrollToCard = (id: string) => {
+    window.dispatchEvent(new CustomEvent('engram-open-card', { detail: id }));
     window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
   };
 
@@ -347,7 +353,7 @@ export function App() {
     } },
     { title: 'What it became', run: async (say) => {
       setDeepRecall(false); load(DEMO_T); scrollToCard('card-profile');
-      say('Here is the learned Profile (read first on every turn) and the Proof panel — 11 eval gates, 3× on real Qwen. A memory that gets more accurate over time.');
+      say('Here is the learned Profile (read first on every turn) and the Proof panel — 12 eval gates, 3× on real Qwen. A memory that gets more accurate over time.');
     } },
   ];
 
@@ -410,7 +416,7 @@ export function App() {
     } },
     { title: 'What it learned', run: async (say) => {
       setDeepRecall(false); load(DEMO_T); scrollToCard('card-profile');
-      say('The learned Profile (read first every turn) + the Proof panel — 11 eval gates, 3× on real Qwen. Now switch to 💬 Chat and keep talking to it yourself.');
+      say('The learned Profile (read first every turn) + the Proof panel — 12 eval gates, 3× on real Qwen. Now switch to 💬 Chat and keep talking to it yourself.');
     } },
   ];
 
@@ -534,8 +540,7 @@ export function App() {
 
       <div className="main">
         <div className="side">
-          <div className="card">
-            <h3>Memory at a glance</h3>
+          <Card title="Memory at a glance">
             {stats ? (
               <div className="stats">
                 <div className="stat hot"><div className="n">{stats.entities}</div><div className="l">neurons (entities)</div></div>
@@ -545,11 +550,10 @@ export function App() {
                 <div className="stat forget"><div className="n">{stats.forgotten}</div><div className="l">forgotten</div></div>
               </div>
             ) : <div className="empty">select a tenant</div>}
-          </div>
+          </Card>
 
           {view !== 'chat' && (<>
-          <div className="card" id="card-answer">
-            <h3>Ask both brains <span className="muted">(memory vs none)</span></h3>
+          <Card id="card-answer" title={<>Ask both brains <span className="muted">(memory vs none)</span></>}>
             <div className="search-row">
               <input placeholder="ask a question about you…" value={ask}
                 onChange={(e) => setAsk(e.target.value)}
@@ -571,10 +575,9 @@ export function App() {
                 </div>
               </div>
             )}
-          </div>
+          </Card>
 
-          <div className="card">
-            <h3>Teach Engram</h3>
+          <Card title="Teach Engram" defaultOpen={false}>
             <div className="search-row">
               <input placeholder='tell it a fact, e.g. "my flight is at 6pm"' value={teachText}
                 onChange={(e) => setTeachText(e.target.value)}
@@ -583,12 +586,11 @@ export function App() {
             </div>
             {teachMsg && <div className="trace">{teachMsg}</div>}
             <div className="trace muted">then 💤 Dream to consolidate, and "Ask both brains" to recall it.</div>
-          </div>
+          </Card>
           </>)}
 
           {evals && evals.gates && (
-            <div className="card">
-              <h3>Proof · {evals.gates.filter((g) => g.pass).length}/{evals.gates.length} eval gates {evals.runs ? `(${evals.runs}× ${evals.mode})` : ''}</h3>
+            <Card defaultOpen={false} title={`Proof · ${evals.gates.filter((g) => g.pass).length}/${evals.gates.length} eval gates ${evals.runs ? `(${evals.runs}× ${evals.mode})` : ''}`}>
               <div className="gates">
                 {evals.gates.map((g) => (
                   <div key={g.name} className={`gate ${g.pass ? 'pass' : 'fail'}`} title={g.value}>
@@ -597,18 +599,16 @@ export function App() {
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
 
           {profile && (
-            <div className="card" id="card-profile">
-              <h3>Core memory · learned profile</h3>
+            <Card id="card-profile" defaultOpen={false} title="Core memory · learned profile">
               <div className="profile">{profile.body}</div>
-            </div>
+            </Card>
           )}
 
-          <div className="card" id="card-recall">
-            <h3>Recall (PPR activation)</h3>
+          <Card id="card-recall" title="Recall (PPR activation)">
             <div className="search-row">
               <input placeholder="ask the memory…" value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -649,10 +649,9 @@ export function App() {
                 ))}
               </>
             )}
-          </div>
+          </Card>
 
-          <div className="card" id="card-docs">
-            <h3>Documents (RAG)</h3>
+          <Card id="card-docs" defaultOpen={false} title="Documents (RAG)">
             <input ref={fileRef} type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
               disabled={uploading || !tenant}
               onChange={(e) => onUpload(e.target.files?.[0])}
@@ -663,10 +662,9 @@ export function App() {
               : documents.map((d) => (
                   <div key={d.name} className="mem"><span className="pill">{d.chunks} chunks</span> {d.name}</div>
                 ))}
-          </div>
+          </Card>
 
-          <div className="card" id="card-sleep">
-            <h3>Sleep cycles (REM)</h3>
+          <Card id="card-sleep" title="Sleep cycles (REM)">
             <button className="primary" disabled={dreaming || !tenant} onClick={runDream}
               style={{ width: '100%', marginBottom: 8 }}>
               {dreaming ? '💤 dreaming…' : '💤 Dream now (run sleep cycle)'}
@@ -676,15 +674,28 @@ export function App() {
             {cycles.map((c) => {
               const s = c.stats as any;
               return (
-                <div key={c.id} className="cycle" onClick={() => setSelectedCycle(c)}>
+                <div key={c.id} className={`cycle ${selectedCycle?.id === c.id ? 'on' : ''}`} onClick={() => setSelectedCycle(c)}>
                   <span>{new Date(c.startedAt).toLocaleString()}</span>
                   <span className="delta">+{s.consolidated ?? 0}◆ +{s.connectionsSynthesized ?? 0}✶ −{s.forgotten ?? 0}</span>
                 </div>
               );
             })}
-            {selectedCycle && <CycleDetail cycle={selectedCycle} />}
-          </div>
+            <div className="trace muted">click a cycle to replay the dream, step by step</div>
+          </Card>
         </div>
+
+        {/* Dream drawer: the step-by-step trace overlays the main pane instead of
+            growing the sidebar — no scrolling to find out what the dream did. */}
+        {selectedCycle && (
+          <div className="dreamdrawer">
+            <div className="drawerhead">
+              <span className="drawertitle">💤 Dream · {new Date(selectedCycle.startedAt).toLocaleString()}</span>
+              <span className={`pill ${selectedCycle.status === 'completed' ? '' : 'warn'}`}>{selectedCycle.status}</span>
+              <button className="drawerclose" onClick={() => setSelectedCycle(null)}>✕</button>
+            </div>
+            <CycleDetail cycle={selectedCycle} />
+          </div>
+        )}
 
         {view === 'chat' ? (
           <div className="chatpane">
@@ -722,6 +733,7 @@ export function App() {
             {chatRecalled.length > 0 && (
               <div className="recalledstrip">
                 <span className="muted">🧠 recalled from memory:</span>
+                {chatDeepened && <span className="pill deep" title="Active recall was weak, so the memory dug into the cold tier (forgotten/archived) on its own.">⛏ dug deep</span>}
                 {chatRecalled.slice(0, 5).map((c, i) => (
                   <span key={i} className="pill" title={c}>{c.length > 46 ? c.slice(0, 46) + '…' : c}</span>
                 ))}
@@ -780,6 +792,32 @@ export function App() {
         </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Collapsible sidebar card. Keeps the sidebar scannable: only the essentials are
+ * open by default; the rest expand on click, or automatically when the demo (or
+ * any code) scrolls to them via `engram-open-card`.
+ */
+function Card({ id, title, defaultOpen = true, children }: {
+  id?: string; title: ReactNode; defaultOpen?: boolean; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    if (!id) return;
+    const h = (e: Event) => { if ((e as CustomEvent).detail === id) setOpen(true); };
+    window.addEventListener('engram-open-card', h);
+    return () => window.removeEventListener('engram-open-card', h);
+  }, [id]);
+  return (
+    <div className="card" id={id}>
+      <h3 className="cardhead" onClick={() => setOpen((o) => !o)}>
+        <span className="cardtitle">{title}</span>
+        <span className="caret">{open ? '▾' : '▸'}</span>
+      </h3>
+      {open && children}
     </div>
   );
 }

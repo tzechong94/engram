@@ -40,7 +40,28 @@ button { cursor: pointer; transition: border-color .15s, background .15s; }
 button:hover { border-color: var(--accent); }
 button.primary { background: linear-gradient(180deg, #155e63, #0c3a40); border-color: #1d7c83; }
 
-.main { flex: 1; display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
+.main { flex: 1; display: grid; grid-template-columns: 340px 1fr; min-height: 0; position: relative; }
+
+/* Collapsible sidebar cards */
+.cardhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; user-select: none; margin: 0; }
+.cardhead .caret { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.cardhead:hover .caret { color: var(--text); }
+.cardhead .cardtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card > .cardhead + * { margin-top: 10px; }
+
+/* Dream drawer: step-by-step trace overlays the main pane */
+.dreamdrawer {
+  position: absolute; top: 0; right: 0; width: min(440px, 85%); height: 100%;
+  background: rgba(10, 13, 20, 0.97); border-left: 1px solid var(--border);
+  z-index: 15; overflow-y: auto; padding: 14px 16px;
+  box-shadow: -14px 0 44px rgba(0, 0, 0, 0.5);
+}
+.drawerhead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; position: sticky; top: 0; background: rgba(10,13,20,0.97); padding: 2px 0 8px; }
+.drawertitle { font-weight: 700; font-size: 13px; flex: 1; }
+.drawerclose { font-size: 12px; padding: 3px 9px; flex-shrink: 0; }
+.pill.warn { background: rgba(250, 204, 21, 0.15); color: #fde047; }
+.pill.deep { background: rgba(124, 58, 237, 0.22); color: #d8b4fe; }
+.cycle.on { border-color: var(--accent); background: rgba(45, 212, 191, 0.08); }
 .side { border-right: 1px solid var(--border); overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .graphwrap { position: relative; min-width: 0; }
 .recenter { position: absolute; top: 10px; right: 12px; z-index: 5; font-size: 12px; padding: 4px 10px; background: rgba(8,10,16,0.7); border: 1px solid var(--border); }
