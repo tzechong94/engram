@@ -90,6 +90,9 @@ async function extractText(filename: string, buf: Buffer): Promise<string> {
 const MIME: Record<string, string> = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+  // application/pdf makes the browser render it inline (its built-in viewer) rather
+  // than download it — Chrome blocks downloads over plain HTTP as "insecure".
+  '.pdf': 'application/pdf',
 };
 
 function serveStatic(res: http.ServerResponse, pathname: string): void {
