@@ -47,6 +47,8 @@ export interface QwenConfig {
   embedModel: string;
   embedDim: number;
   rerankModel: string;
+  /** Vision model for image transcription/OCR on upload (qwen-vl family). */
+  vlModel: string;
 }
 
 export interface SleepConfig {
@@ -105,6 +107,7 @@ export function loadConfig(): EngramConfig {
       embedModel: envOpt('QWEN_EMBED_MODEL', 'text-embedding-v3'),
       embedDim: envInt('QWEN_EMBED_DIM', 1024),
       rerankModel: envOpt('QWEN_RERANK_MODEL', 'gte-rerank'),
+      vlModel: envOpt('QWEN_VL_MODEL', 'qwen-vl-max'),
     },
     sleep: {
       costCapCents: envInt('SLEEP_COST_CAP_CENTS', 50),

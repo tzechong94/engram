@@ -118,6 +118,11 @@ export class MockQwenClient implements QwenClient {
     return JSON.stringify({});
   }
 
+  async describeImage(_imageDataUrl: string, _prompt: string): Promise<ChatResult> {
+    // Deterministic stub — enough for offline tests to exercise the ingest path.
+    return { text: 'MOCK OCR: an uploaded image containing sample text.', promptTokens: 0, completionTokens: 0 };
+  }
+
   async rerank(query: string, documents: string[]): Promise<RerankItem[]> {
     const q = new Set(
       query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean),

@@ -90,6 +90,33 @@ export class DashScopeQwenClient implements QwenClient {
     return sorted.map((d) => d.embedding);
   }
 
+  async describeImage(imageDataUrl: string, prompt: string): Promise<ChatResult> {
+    // Vision via the same OpenAI-compatible endpoint: qwen-vl takes content
+    // arrays with an image_url part (data: URLs supported).
+    const body = {
+      model: this.cfg.vlModel,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+            { type: 'text', text: prompt },
+          ],
+        },
+      ],
+      temperature: 0.1,
+    };
+    const json = (await this.post('/chat/completions', body)) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+    return {
+      text: json.choices?.[0]?.message?.content ?? '',
+      promptTokens: json.usage?.prompt_tokens ?? 0,
+      completionTokens: json.usage?.completion_tokens ?? 0,
+    };
+  }
+
   async rerank(query: string, documents: string[]): Promise<RerankItem[]> {
     // Rerank is optional — set QWEN_RERANK_MODEL='' to disable (recall still works
     // via vector+keyword+PPR+budgeter). DashScope rerank is NOT on the OpenAI-

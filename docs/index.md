@@ -141,8 +141,9 @@ Four roles, all on DashScope / Model Studio:
 - **qwen-turbo** for extraction and contradiction judging.
 - **text-embedding-v3** (1024-dim) for every embedding.
 - **gte-rerank** for sharpening recall before the budgeter packs.
+- **qwen-vl-max** for vision: uploaded images (photos, screenshots, scans) are transcribed into ingestable text.
 
-The memory server, the sleep worker, the eval harness, the viewer, and the Telegram agent are all Qwen-native. A deterministic offline mock (hash-to-vector embeddings plus rule-based stubs) means the entire system and its tests run with no key, and switching to the real API is one env flag. Local versus Alibaba Cloud (AnalyticDB for PostgreSQL, Tair, OSS, Function Compute) is a config swap, not a rewrite, because everything sits behind infra interfaces.
+The memory server, the sleep worker, the eval harness, and the viewer (including its live chat agent) are all Qwen-native. A deterministic offline mock (hash-to-vector embeddings plus rule-based stubs) means the entire system and its tests run with no key, and switching to the real API is one env flag. Local versus Alibaba Cloud (AnalyticDB for PostgreSQL, Tair, OSS, Function Compute) is a config swap, not a rewrite, because everything sits behind infra interfaces.
 
 ## What I would tell the next person building agent memory
 

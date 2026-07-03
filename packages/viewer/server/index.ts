@@ -75,14 +75,38 @@ function readBody(req: http.IncomingMessage, limit = 30 * 1024 * 1024): Promise<
   });
 }
 
-/** Extract plain text from an uploaded file buffer by extension. */
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
+};
+const OCR_PROMPT =
+  'Transcribe ALL text and content in this image, faithfully and completely: headings, body text, ' +
+  'tables (as rows), numbers, codes, dates, labels, handwriting. Preserve the reading order. ' +
+  'If parts are diagrams or photos, describe them in one line each. Output plain text only.';
+
+/** Extract plain text from an uploaded file buffer by extension.
+ *  Images are transcribed with the Qwen vision model (qwen-vl) — real OCR,
+ *  including photos, screenshots, and handwriting. */
 async function extractText(filename: string, buf: Buffer): Promise<string> {
-  if (filename.toLowerCase().endsWith('.pdf')) {
+  const lower = filename.toLowerCase();
+  const ext = path.extname(lower);
+  if (IMAGE_MIME[ext]) {
+    const dataUrl = `data:${IMAGE_MIME[ext]};base64,${buf.toString('base64')}`;
+    const r = await qwen.describeImage(dataUrl, OCR_PROMPT);
+    log.info('image transcribed via qwen-vl', { filename, chars: r.text.length });
+    return r.text;
+  }
+  if (lower.endsWith('.pdf')) {
     // Import the lib entry directly — pdf-parse's index.js runs debug code that
     // reads a sample PDF off disk and throws when imported as the package main.
     const mod = await import('pdf-parse/lib/pdf-parse.js');
     const pdfParse = (mod.default ?? mod) as (b: Buffer) => Promise<{ text: string }>;
-    return (await pdfParse(buf)).text;
+    const text = (await pdfParse(buf)).text;
+    if (!text.trim()) {
+      // Scanned PDF: pages are images, no text layer. Rasterizing PDFs server-side
+      // needs native deps we deliberately avoid — guide the user to the image path.
+      throw new Error('this PDF has no text layer (scanned?) — screenshot the page(s) and upload as PNG/JPG instead; images are OCR\'d with qwen-vl');
+    }
+    return text;
   }
   return buf.toString('utf8'); // .txt / .md / anything textual
 }

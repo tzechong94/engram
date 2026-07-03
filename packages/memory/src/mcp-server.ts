@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Engram memory MCP server (stdio). This is the online path the agent reaches —
- * the agent (Qwen Code) connects to it as an MCP server configured in
+ * an agent runtime connects to it as an MCP server configured in
  * container.json. Tools: write / search / forget.
  *
  * Isolation: the tenant is taken from ENGRAM_TENANT_ID (injected at container

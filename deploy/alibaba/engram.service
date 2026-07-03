@@ -2,7 +2,7 @@
 # Engram hero (memory + sleep + viewer) as a systemd service on the ECS VM.
 # Install: copy to /etc/systemd/system/, replace __USER__ and __DIR__, then
 #   sudo systemctl enable --now engram
-# (The chat agent / nanoclaw host is run separately — see docs/agent-and-deploy.md.)
+# (A chat agent runtime, if used, runs separately and attaches over MCP.)
 Description=Engram (memory + viewer)
 After=docker.service network-online.target
 Requires=docker.service

@@ -1,10 +1,10 @@
 # Engram Architecture
 
-Engram is a cloud-hosted personal agent reached over Telegram / WhatsApp / WeChat,
-reasoning on Qwen, built around a **self-managing cloud memory layer** whose **sleep
-phase** consolidates, forgets, reconciles, and connects memories during downtime. The
-agent is the vehicle; the memory layer is the hero, a separable MCP service, so it drops
-into any agent.
+Engram is a **self-managing memory layer for AI agents**, built entirely on Qwen: a
+separable MCP service whose **sleep phase** consolidates, forgets, reconciles, and
+connects memories during downtime. Any MCP-capable agent runtime attaches by spawning
+the memory server with a tenant id; the built-in viewer ships a live chat agent, the
+brain visualization, and the proof panel.
 
 ## System diagram
 
@@ -12,13 +12,11 @@ into any agent.
 
 ```mermaid
 flowchart TB
-  User["👤 User · Telegram / WhatsApp / WeChat"]
+  User["👤 User"]
 
-  subgraph AGENT["Agent runtime · NanoClaw (vendored framework), engine = Qwen Code"]
-    ADAPT["Channel adapters"] --> ROUTER["Router · per-user session"] --> RUNNER["Agent-runner · Qwen provider (ACP)"]
-  end
+  AGENT["🤖 Your agent · any MCP-capable runtime<br/>(the viewer ships a live chat agent)"]
 
-  QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen3-coder · embeddings · rerank"]
+  QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen-turbo · text-embedding-v3 · gte-rerank · qwen-vl"]
 
   subgraph ENGRAM["⭐ Engram memory layer · MCP server, THE JUDGED CONTRIBUTION (100% Qwen)"]
     direction TB
@@ -37,9 +35,9 @@ flowchart TB
   VIEWER["🧠 Viewer · graph · dream trace · two-brains · live proof"]
   EVAL["✅ Eval · 12-gate suite · 3× real Qwen · all green"]
 
-  User <--> ADAPT
-  RUNNER <-->|reason| QWEN
-  RUNNER -->|"MCP · write / search / forget"| ONLINE
+  User <--> AGENT
+  AGENT <-->|reason| QWEN
+  AGENT -->|"MCP · write / search / forget"| ONLINE
   ONLINE <--> PG
   RECALL -. embed + rerank .-> QWEN
   SLEEP <--> PG
@@ -53,15 +51,15 @@ flowchart TB
 ### Detail (ASCII)
 
 ```
- CHANNELS                AGENT RUNTIME (nanoclaw)            MEMORY (the hero, MCP)
- ┌──────────┐  webhook   ┌───────────────────────┐          ┌────────────────────────┐
- │ Telegram │──poll────▶ │ router → per-session   │          │ memory MCP server      │
- │ WhatsApp │──────────▶ │ container (Bun)        │  MCP     │  memory.write          │
- │ WeChat   │──────────▶ │   engine = QWEN CODE   │─stdio──▶ │  memory.search (+pack) │
- │ [mock]   │  (eval)    │   (ACP daemon)         │          │  memory.forget         │
- └──────────┘            └───────────┬───────────┘          └───────────┬────────────┘
-                                     │ tenant_id env                    │ core lib (direct)
-                                     ▼                                  ▼
+ YOUR AGENT (any MCP-capable runtime)                       MEMORY (the hero, MCP)
+ ┌───────────────────────────────────┐                      ┌────────────────────────┐
+ │ chat app · bot · assistant        │                      │ memory MCP server      │
+ │ (the viewer ships a live chat     │        MCP           │  memory.write          │
+ │  agent; the eval uses mock        │───────stdio──────▶   │  memory.search (+pack) │
+ │  channels)                        │                      │  memory.forget         │
+ └───────────────────┬───────────────┘                      └───────────┬────────────┘
+                     │ tenant_id env                                    │ core lib (direct)
+                     ▼                                                  ▼
                           ┌─────────────────────────────────────────────────────────┐
                           │ packages/shared,  infra interfaces                       │
                           │ Store · Vector · Blob · Queue · Scheduler · Secrets       │
@@ -134,7 +132,7 @@ Everything is behind `packages/shared` interfaces selected by `ENGRAM_INFRA`. No
 hardcoded cloud endpoints; deploying to Alibaba is a config swap. See `deploy/alibaba/`.
 
 ## Multi-tenancy & isolation
-One isolated agent container per session (nanoclaw). Memory is scoped per tenant
+The agent runtime isolates sessions; memory is scoped per tenant
 (`tenant_id` = the owner user id) on every query; content is encrypted at rest. The
 sleep phase is isolated and cost-bounded per tenant so one user's cycle can't starve
 others.

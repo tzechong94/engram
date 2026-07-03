@@ -2,7 +2,7 @@
 
 Two layers of testing:
 - **Automated evals** (memory layer, gated), `pnpm --filter @engram/eval evals`
-- **Manual bot tests** (end-to-end via Telegram), the checklist below
+- **Manual playground tests** (end-to-end via the viewer chat), the checklist below
 
 Track-1 (MemoryAgent) judges score: efficient storage/retrieval, **timely forgetting**, and **recall within limited context windows**. Every test below maps to one of those.
 
@@ -46,71 +46,51 @@ The headline before/after-sleep report is the separate `pnpm --filter @engram/ev
 
 ---
 
-## B. Manual bot tests (Telegram)
+## B. Manual playground tests (viewer 💬 Chat, `localhost:8080`)
 
-Legend: **DM** = direct message; **GROUP** = the group chat (say the bot's name or @mention to wake it).
+Use the chat tab on a fresh tenant (＋ new). Every message is captured to memory; the
+transcript is only a view (🗑 Clear chat wipes the screen, not the memory).
 
 ### 1. Recall accuracy: *the core proof*
-- [ ] DM: "my flight is tomorrow at 6pm" → later "what time is my flight?" → **6pm**
-- [ ] "what's my name?" → **Tze**
+- [ ] "my flight is tomorrow at 6pm" → later "what time is my flight?" → **6pm with the absolute date**
 - [ ] Tell it 3 facts in separate messages, then ask each back → all correct
-- [ ] Ask something it was never told → it says **"I don't know"**, does NOT invent
+- [ ] Ask something it was never told → it says **"I don't know"** (offers to record), does NOT invent
 
-### 2. Conversation context (multi-turn)
-- [ ] "I'm planning a trip to Japan" → "what should I pack?" → answer references **Japan** (not generic)
-- [ ] A 5-message thread, then "what did I say first?" → recalls the opening message
+### 2. Transcript ≠ memory (cross-session persistence)
+- [ ] Teach a fact → **🗑 Clear chat** (screen empty) → ask again → still **recalled**
+- [ ] Refresh the page → transcript restored, memory intact
 
 ### 3. Temporal reasoning (dates)
-- [ ] "my flight is tomorrow at 6pm" → "what date is that?" → **tomorrow's date**, not today
-- [ ] "remind me next Friday" → it computes the correct Friday
-- [ ] "what day is it today?" → correct current date
+- [ ] "dentist appointment tomorrow at 3pm" → stored with `[tomorrow = YYYY-MM-DD]` (Files view) → asks answer with the absolute date
+- [ ] "gym every Tuesday" → NOT date-anchored (recurring)
 
-### 4. Cross-session memory (persistence)
-- [ ] Tell it a fact → wait for the container to idle out (or restart) → new message later: ask the fact back → still **recalled** (proves Postgres-backed, not in-session only)
+### 4. Forgetting & updates (Track-1 keyword)
+- [ ] "I live in New York" → later "actually I moved to San Francisco" → 💤 Dream → "where do I live?" → **San Francisco** only
+- [ ] Old trivia (seeded by the demo) absent from normal recall; **deep recall** (Brain view toggle) still finds it
+- [ ] Ask about the forgotten trivia in chat → it answers with the **⛏ dug deep** pill (agentic escalation)
 
-### 5. Forgetting & updates (Track-1 keyword)
-- [ ] "I live in New York" → later "actually I moved to San Francisco" → run a sleep cycle → "where do I live?" → **San Francisco** only, NOT New York
-- [ ] Trivial throwaway fact mentioned once, never referenced → after sleep, not surfaced
+### 5. Document RAG (upload → recall from docs)
+- [ ] 📎 a `.txt`/`.md`/`.pdf` with a fact the model can't already know → ask → answers **from the document**
+- [ ] 📎 an **image** (screenshot/photo of text) → qwen-vl transcribes it → the fact is recallable
+- [ ] Ask a fact the document does **not** contain → **"I don't know"**
+- [ ] A fact buried mid-document is still retrieved
 
-### 5b. Document RAG (upload → recall from docs)
-- [ ] Upload a `.txt`/`.md`/`.pdf` (viewer "Documents" panel or `POST /api/<tenant>/upload`) with a fact the model can't already know
-- [ ] Ask the bot that fact → it answers **from the document** (verbatim detail: numbers, names)
-- [ ] Ask a fact the document does **not** contain → it says **"I don't know"**, doesn't invent
-- [ ] Upload a long multi-page doc → a fact buried in the middle is still retrieved
-
-### 6. Behavior config from chat (with approval)
-- [ ] DM: "keep your replies to one line" → **approval card** in DM → approve → next replies are one line
-- [ ] GROUP: "only reply when I say your name" → approval card → approve → it goes quiet unless named
-- [ ] DM stays always-on even after the above (DMs shouldn't get gated)
-
-### 7. Name-as-mention (group)
-- [ ] GROUP: a message containing "Engram" or "qwenny" (no @) → it replies
-- [ ] GROUP: a message without the name → it stays silent
-- [ ] GROUP: @mention via Telegram → it replies
-
-### 8. Destination routing
-- [ ] Ask a question in the GROUP → reply lands **in the group**, once (NOT duplicated to your DM)
-- [ ] Ask in DM → reply in DM only
-
-### 9. Scheduling / reminders
-- [ ] "remind me in 2 minutes to drink water" → ~2 min later it pings you
-- [ ] "remind me every weekday at 9am" → confirms a recurring reminder
-
-### 10. Robustness / edge cases
-- [ ] Send an empty / emoji-only / very long message → no crash, sensible reply
-- [ ] Rapid-fire 5 messages → all handled, no dropped/duplicated replies
+### 6. Robustness / edge cases
+- [ ] Empty / emoji-only / very long message → no crash, sensible reply
 - [ ] Ask the same question twice → consistent answer
+- [ ] Model dropdown (qwen-max/plus/turbo) switches the reply model; garbage values are rejected server-side
 
-### 11. The viewer (presentation: `localhost:8080`)
-- [ ] Brain graph renders; nodes = entities, edges = relationships
-- [ ] "💤 Dream now" → graph grows; the **step-by-step dream trace** shows forget→cluster→consolidate→reconcile→synthesize→profile
+### 7. The viewer (presentation: `localhost:8080`)
+- [ ] ▶ Demo: the 10-act stage runs end to end on Autoplay (~2 min) with no manual scrolling
+- [ ] Brain graph renders; 💤 Dream grows it; the **dream drawer** shows the step-by-step trace
 - [ ] A contradiction shows as a superseded (greyed) edge after a cycle
 - [ ] Files view: notes / episodes / sleep-cycle reports are browsable
+- [ ] Proof card shows 12/12 gates; the demo's final act shows the learning-curve chart
 
 ---
 
 ## C. Pre-submission gate (must all be green)
 - [ ] `pnpm --filter @engram/eval evals` (real Qwen), all enforced gates pass
 - [ ] Manual sections 1–5 green (memory is the Track-1 hero)
-- [ ] One clean real-Qwen demo recorded: teach → dream (viewer) → recall → forget/update
-- [ ] Host runs as a single stable instance (not a stray `pnpm dev` that crashed)
+- [ ] One clean real-Qwen demo recorded (▶ Demo Autoplay on the stage)
+- [ ] The deployed viewer (Alibaba ECS) serves the same build, Proof panel populated

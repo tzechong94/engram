@@ -4,8 +4,6 @@
 #
 #   ./engram.sh up      Boot everything (infra + build + seed demo + viewer) and
 #                       open the brain at http://localhost:8080
-#   ./engram.sh agent   Build the full conversational agent (Qwen Code on
-#                       Telegram/WhatsApp, wired to memory) — guided setup
 #   ./engram.sh down    Stop the viewer/sleep daemons and the docker stack
 #   ./engram.sh test    Run the full test suite (incl. DB integration)
 #   ./engram.sh eval    Run the eval harness (before/after-sleep report)
@@ -130,45 +128,11 @@ cmd_test() { check_prereqs; load_env; compose up -d >/dev/null 2>&1; wait_for_pg
   ENGRAM_TEST_DB=1 pnpm run test
 }
 cmd_agent() {
-  check_prereqs; load_env
-  c_b "Engram full agent flow (Qwen Code on Telegram/WhatsApp, wired to memory)"
-  if [ -z "${DASHSCOPE_API_KEY:-}" ] || [ "${QWEN_MOCK:-true}" = "true" ]; then
-    c_y "  Heads up: the agent ENGINE needs real Qwen. Set DASHSCOPE_API_KEY and QWEN_MOCK=false in .env."
-    c_y "  (The memory layer can mock; the conversational agent cannot.)"
-  fi
-  step "ensuring hero infra is up"; compose up -d >/dev/null 2>&1; wait_for_pg
-  pnpm --filter @engram/memory migrate >/dev/null 2>&1 || true
-  step "building Engram packages"; pnpm run build >/dev/null 2>&1 && c_g "  build complete"
-  step "installing nanoclaw runtime deps"; ( cd nanoclaw-v2 && pnpm install >/dev/null 2>&1 ) && c_g "  deps installed"
-  step "building the agent container image (bakes in Qwen Code) — this can take a few minutes"
-  if ( cd nanoclaw-v2 && ./container/build.sh ); then c_g "  agent image built"; else
-    c_r "  container build failed (need Docker). Fix and re-run ./engram.sh agent."; exit 1; fi
-
-  echo
-  c_g "Deterministic setup done. Now the guided steps (need your input / nanoclaw skills):"
-  cat <<'EOF'
-
-  1. Credentials (once):  in Claude Code, run  /use-native-credential-proxy
-       → makes the agent read DASHSCOPE_API_KEY from .env (no OneCLI).
-
-  2. Install a channel (in Claude Code):
-       /add-telegram     → paste a bot token from @BotFather   (easiest; long-polling)
-       /add-whatsapp     → scan the QR (Baileys)
-
-  3. Create + wire the first agent:
-       /init-first-agent                                  (picks channel, makes the agent)
-       cd nanoclaw-v2 && pnpm ncl groups list             (copy the agent group id)
-       pnpm ncl groups config update --id <group> --provider qwen --model qwen-max
-
-  4. Attach Engram memory to that agent group (tenant = the agent group id is fine):
-       bash scripts/install-engram-memory.sh <group-id> <tenant-id>
-
-  5. Start the host:
-       cd nanoclaw-v2 && pnpm run dev        (or its launchd/systemd service)
-
-  Then DM your bot. Watch memory grow in the viewer:  ./engram.sh up  →  http://localhost:8080
-  Full runbook + cloud deploy:  docs/agent-and-deploy.md
-EOF
+  c_y "The conversational agent has moved to its own project (an agent runtime that"
+  c_y "consumes Engram's memory over MCP). Engram itself is the memory layer + viewer:"
+  c_y "  ./engram.sh          # run the memory layer and the brain viewer"
+  c_y "Any MCP-capable agent can attach: point it at packages/memory/dist/mcp-server.js"
+  c_y "with ENGRAM_TENANT_ID + DATABASE_URL env (see ARCHITECTURE.md)."
 }
 
 cmd_eval()  { load_env; pnpm --filter @engram/eval start; }

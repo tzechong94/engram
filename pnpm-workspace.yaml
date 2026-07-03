@@ -1,8 +1,8 @@
 # Engram workspace. The hero (memory) + shared infra live here as clean,
-# independently-testable packages. nanoclaw-v2 is intentionally NOT a member:
-# it stays a self-contained project and reaches the memory service over MCP
-# (a subprocess), not as a code dependency. That keeps the memory package
-# forkable and reusable by Desk (Track 4) with zero agent-runtime coupling.
+# independently-testable packages. Agent runtimes are deliberately NOT members:
+# they live in their own repos and reach the memory service over MCP (a stdio
+# subprocess), not as a code dependency — which is what keeps Engram a drop-in
+# memory layer for any agent.
 packages:
   - "packages/*"
 

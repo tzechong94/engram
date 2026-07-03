@@ -38,7 +38,7 @@ timescale); pinned/recently-accessed memories are always protected.
  accumulated importance.
 
 ## Models (Model Studio / DashScope)
-`qwen-max` (chat + sleep synthesis), `qwen3-coder` (agent engine), embeddings @ 1024 dims,
+`qwen-max` (chat + sleep synthesis), `qwen-turbo` (extraction), `qwen-vl-max` (image OCR), embeddings @ 1024 dims,
 `gte-rerank`. **Offline mock** (`QWEN_MOCK=true`, default until a key is set): deterministic
 hash→vector embeddings + rule-based stubs, so all tests and the eval pass with no API key.
 Real Qwen swaps in via `DASHSCOPE_API_KEY` + `QWEN_MOCK=false`.
@@ -56,8 +56,3 @@ PostgreSQL, Tair, OSS, Function Compute + EventBridge.
  **cold-archive blobs** (forgotten/consolidated raw episodes in OSS/MinIO), which are never
  searched.
 
-## Agent engine
-NanoClaw runtime with a `qwen` provider driving **Qwen Code** (`@qwen-code/qwen-code`,
-pinned) in ACP daemon mode over stdio, pointed straight at Model Studio. Channels: Telegram
-(polling) end-to-end; WhatsApp wired but creds-gated; a mock channel drives the cross-channel
-recall eval without WhatsApp creds.

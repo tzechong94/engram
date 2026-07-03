@@ -44,4 +44,8 @@ export interface QwenClient {
 
   /** Rerank documents against a query; returns items sorted by descending score. */
   rerank(query: string, documents: string[]): Promise<RerankItem[]>;
+
+  /** Vision (qwen-vl): read an image (data: URL) and answer `prompt` about it —
+   *  used to transcribe/OCR uploaded images into ingestable text. */
+  describeImage(imageDataUrl: string, prompt: string): Promise<ChatResult>;
 }

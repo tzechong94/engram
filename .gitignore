@@ -19,12 +19,6 @@ logs/
 # eval outputs
 packages/eval/out/
 
-# nanoclaw runtime / installation-specific (never commit)
-nanoclaw-v2/data/
-nanoclaw-v2/logs/
-nanoclaw-v2/groups/
-nanoclaw-v2/.env
-nanoclaw-v2/repo-tokens/
 
 # os / editor
 .DS_Store

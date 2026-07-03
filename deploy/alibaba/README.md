@@ -4,20 +4,20 @@ Two paths. **Start with v1 (single VM)**, it's the fastest live deploy and is fa
 how Engram runs locally. Graduate to managed services later for scale/HA.
 
 ## Why a VM (not serverless)
-nanoclaw spawns a Docker container per chat session, so the runtime needs Docker. Function
+The stack runs in Docker (Postgres, Redis, MinIO), so a VM is the simplest faithful host. Function
 Compute can't spawn sibling containers. One ECS VM with Docker runs the whole thing exactly
 like your laptop.
 
 ## v1: single ECS VM (recommended) 🚀
 
-The entire local stack (Postgres+pgvector, Redis, MinIO, the viewer, and the nanoclaw
+The entire local stack (Postgres+pgvector, Redis, MinIO, the viewer, and any attached
 agent) runs on one VM. No managed services required to go live.
 
 ### 1. Provision (your Alibaba account)
 - **ECS instance:** Ubuntu 22.04, ~4 vCPU / 8–16 GB RAM, ESSD system disk (≥40 GB). Enable
  **automatic snapshots** (session state + memory live on this disk in v1).
 - **Security group inbound:** `22` (SSH), `8080` (viewer, lock to your IP, or front with SLB
- + `VIEWER_TOKEN`). Outbound: open (Telegram polling + Qwen API).
+ + `VIEWER_TOKEN`). Outbound: open (Qwen API).
 
 ### 2. Bootstrap the VM
 ```bash
@@ -66,7 +66,7 @@ When you outgrow one VM, move state off it:
 Steps: provision the managed services → set `ENGRAM_INFRA=alibaba` + point `DATABASE_URL` at
 AnalyticDB in `.env` → `pnpm --filter @engram/memory migrate` → keep the agent runtime on the
 VM (it still needs Docker) but its memory + state now live in managed services. `deploy.sh`
-validates config and scaffolds this path. True horizontal scale (nanoclaw spawning pods on
+validates config and scaffolds this path. True horizontal scale (agent runtimes spawning pods on
 ACK/Kubernetes) is a further, separate change.
 
 ## Files here

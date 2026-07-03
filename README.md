@@ -8,8 +8,8 @@ consolidates raw episodes into durable knowledge, forgets the stale, reconciles
 contradictions, and synthesizes new connections, the way sleep consolidates memory in the
 brain.
 
-The memory layer is a clean, separable **MCP service**. A Qwen agent (Telegram / WhatsApp)
-is the vehicle that shows it off.
+The memory layer is a clean, separable **MCP service**: any agent attaches over MCP.
+The built-in viewer (chat + brain graph + live demo) shows it off.
 
 > Qwen Cloud Hackathon · Track 1 (MemoryAgent) · MIT
 
@@ -43,7 +43,6 @@ packages/memory/   ← the hero: memory MCP server (online path) + sleep/REM cyc
 packages/shared/   ← infra interfaces + Qwen client (DashScope, behind an interface + offline mock)
 packages/viewer/   ← brain viewer: read-only API + React neural-graph UI (Demo Mode, two-brains, proof)
 packages/eval/     ← gated eval suite (recall · forgetting · limited-context · contradiction · RAG)
-nanoclaw-v2/       ← agent runtime: vendored NanoClaw framework, engine = Qwen Code
 deploy/alibaba/    ← config-swap deploy to Alibaba Cloud
 ```
 
@@ -65,7 +64,6 @@ Generative-Agents importance): `docs/memory-research-summary.md`.
 ./engram.sh # boot docker + build + start the viewer + open the browser
 ./engram.sh eval # run the eval, print the report
 ./engram.sh dream # force a sleep/REM cycle now
-./engram.sh agent # set up the Telegram / WhatsApp agent (guided)
 ./engram.sh down # stop everything (data preserved)
 ```
 
@@ -73,9 +71,9 @@ Runs offline on a deterministic **mock Qwen** until you add a key. Turn on real 
 `DASHSCOPE_API_KEY` and `QWEN_MOCK=false` in `.env` (the Qwen client is behind an interface,
 so inference + embeddings behave identically local and cloud).
 
-The agent half (`./engram.sh agent`) builds on the vendored NanoClaw runtime (Telegram +
-WhatsApp adapters, per-session containers) with the engine on **Qwen Code** and Engram
-memory attached over MCP. Full runbook: `docs/agent-and-deploy.md`.
+Engram is agent-agnostic: any MCP-capable agent runtime attaches by spawning
+`packages/memory/dist/mcp-server.js` (stdio) with `ENGRAM_TENANT_ID` + `DATABASE_URL`.
+The memory layer needs zero code changes to move between agents.
 
 ## Deploy to Alibaba
 
@@ -87,13 +85,11 @@ EventBridge (sleep schedule). See `deploy/alibaba/`.
 
 ```mermaid
 flowchart TB
- User["👤 User · Telegram / WhatsApp / WeChat"]
+ User["👤 User"]
 
- subgraph AGENT["Agent runtime · NanoClaw (vendored framework), engine = Qwen Code"]
- ADAPT["Channel adapters"] --> ROUTER["Router · per-user session"] --> RUNNER["Agent-runner · Qwen provider (ACP)"]
- end
+ AGENT["🤖 Your agent · any MCP-capable runtime<br/>(chat app, bot, assistant; Engram's viewer includes one)"]
 
- QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen3-coder · embeddings · rerank"]
+ QWEN["☁️ Qwen · Model Studio / DashScope<br/>qwen-max · qwen-turbo · text-embedding-v3 · gte-rerank · qwen-vl"]
 
  subgraph ENGRAM["⭐ Engram memory layer · MCP server, THE HERO (100% Qwen)"]
  direction TB
@@ -112,9 +108,9 @@ flowchart TB
  VIEWER["🧠 Viewer · graph · dream trace · two-brains · proof"]
  EVAL["✅ Eval · 12-gate suite · 3× real Qwen"]
 
- User <--> ADAPT
- RUNNER <-->|reason| QWEN
- RUNNER -->|"MCP · write / search / forget"| ONLINE
+ User <--> AGENT
+ AGENT <-->|reason| QWEN
+ AGENT -->|"MCP · write / search / forget"| ONLINE
  ONLINE <--> PG
  RECALL -. embed + rerank .-> QWEN
  SLEEP <--> PG
@@ -248,7 +244,9 @@ visualization in the viewer.
 > along.*
 
 ### 6. Document RAG: `MemoryService.ingestDocument`
-Upload a `.txt` / `.md` / `.pdf` and it's:
+Upload a `.txt` / `.md` / `.pdf`, or an **image** (`.png`/`.jpg`/`.webp`): photos, screenshots,
+and scans are transcribed by **qwen-vl-max** (real OCR, `QWEN_VL_MODEL`) before ingestion, so a
+photographed receipt becomes recallable memory. Then it's:
 1. **Chunked** (`chunkText`) on paragraph boundaries into ≤**2400-char** chunks with a **200-char
  overlap** (over-long paragraphs are hard-split with the same overlap).
 2. **Embedded** per chunk (`text-embedding-v3`).

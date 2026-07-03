@@ -599,7 +599,7 @@ export function App() {
           </Card>
 
           <Card id="card-docs" defaultOpen={false} title="Documents (RAG)">
-            <input ref={fileRef} type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+            <input ref={fileRef} type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg,.webp,text/plain,text/markdown,application/pdf,image/*"
               disabled={uploading || !tenant}
               onChange={(e) => onUpload(e.target.files?.[0])}
               style={{ width: '100%', marginBottom: 8 }} />
@@ -833,7 +833,7 @@ export function App() {
             <div className="chatinput">
               <button className="attach" title="play the guided demo" disabled={demo.active} onClick={startDemo}>▶</button>
               <button className="attach" title="upload a file (PDF, txt, md)" disabled={!tenant} onClick={() => chatFileRef.current?.click()}>📎</button>
-              <input ref={chatFileRef} type="file" accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+              <input ref={chatFileRef} type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg,.webp,text/plain,text/markdown,application/pdf,image/*"
                 style={{ display: 'none' }} onChange={(e) => onChatUpload(e.target.files?.[0])} />
               <input placeholder={tenant ? `message ${tenant}…` : 'pick or create a session first (＋ new)'} value={chatInput}
                 disabled={!tenant || chatBusy}
