@@ -2,6 +2,8 @@
 
 ### demo link: http://47.84.238.178:8080/?token=c8e8b0b6b4adbe7af6e82eced407e8f5
 
+### demo video: https://youtu.be/t-6JnYIEQ-Y
+
 **A self-managing memory layer for AI agents, built on Qwen.** Engram captures and
 recalls fast while you're active, and during downtime runs a **sleep / REM cycle** that
 consolidates raw episodes into durable knowledge, forgets the stale, reconciles
